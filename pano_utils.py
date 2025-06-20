@@ -5,6 +5,34 @@ from pytorch3d.renderer.mesh.rasterizer import Fragments
 from pytorch3d.renderer.blending import hard_rgb_blend
 from pytorch3d.renderer.mesh.shader import phong_shading, ShaderBase
 
+def flip_cubemap_to_fit(cube_images):
+    '''
+    The following setting is for camera orientation:
+    camera_dirs = torch.tensor([
+        [-1, 0, 0],   # -X
+        [1, 0, 0],    # +X
+        [0, -1, 0],   # -Y
+        [0, 1, 0],    # +Y
+        [0, 0, -1],   # -Z
+        [0, 0, 1],    # +Z
+    ], device=device, dtype=torch.float32)
+
+    # Custom up vectors to avoid singularities
+    up_vectors = torch.tensor([
+        [0, 1, 0],    # for -X
+        [0, 1, 0],    # for +X
+        [0, 0, 1],   # for -Y
+        [0, 0, 1],    # for +Y (must not be parallel to +Y dir)
+        [0, 1, 0],    # for -Z
+        [0, 1, 0],    # for +Z
+    ], device=device, dtype=torch.float32)
+    '''
+    cube_images[0] = torch.flip(cube_images[0], dims=(1,))
+    cube_images[2] = torch.flip(cube_images[2], dims=(1,))
+    cube_images[4] = torch.flip(cube_images[4], dims=(1, 2))
+    cube_images[5] = torch.flip(cube_images[5], dims=(2,))
+    return cube_images
+
 def cubemap_to_equirectangular(cube_faces, H, device="cpu"):
     """
     Convert 6 cube face images into a single equirectangular panorama.
