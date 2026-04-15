@@ -1,0 +1,36 @@
+experiment_name: exp_b32_sparse_real
+output_dir: /home/devdata/edge3d_data/runs
+
+model: configs/model/rect_cond_jit_b32_sparse.yaml
+data:
+  train: configs/data/manifest_real_train.yaml
+  val: configs/data/manifest_real_val.yaml
+train: configs/train/debug_overfit.yaml
+
+lightning:
+  accelerator: gpu
+  devices: 1
+  precision: 16-mixed
+  strategy: auto
+  log_every_n_steps: 10
+  val_check_interval: 10
+  limit_train_batches: null
+  limit_val_batches: null
+
+objective:
+  name: paired_supervised
+  fixed_timestep: 0.5
+
+loss:
+  mse_weight: 1.0
+  l1_weight: 0.0
+
+pretrained:
+  public_checkpoint_path: null
+  variant: ema1
+
+freeze:
+  freeze_t_embedder: false
+  freeze_x_embedder: false
+  freeze_final_layer: false
+  freeze_blocks_before: null

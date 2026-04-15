@@ -173,7 +173,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 demo_outputs
-pretrained_weights/*
+pretrained_weights
 !pretrained_weights/.gitkeep
 jit_samples/
 runs
