@@ -103,7 +103,7 @@ def cubemap_to_equirectangular(cube_faces, H, device="cpu"):
         sample_uv = uv.clone()
         sample_uv[0][~mask] = -10  # force out-of-bounds
         # sampled = F.grid_sample(face_img, sample_uv, mode='bilinear', align_corners=True)
-        sampled = F.grid_sample(face_img, sample_uv, mode='nearest')
+        sampled = F.grid_sample(face_img, sample_uv, mode='nearest', align_corners=True)
         pano[:, mask] = sampled[0, :, mask]
 
     return pano
