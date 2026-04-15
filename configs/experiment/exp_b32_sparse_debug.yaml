@@ -1,0 +1,26 @@
+experiment_name: exp_b32_sparse_debug
+output_dir: runs
+
+model: configs/model/rect_cond_jit_b32_sparse.yaml
+data:
+  train: configs/data/manifest_example.yaml
+  val: null
+train: configs/train/debug_overfit.yaml
+
+objective:
+  name: paired_supervised
+  fixed_timestep: 0.5
+
+loss:
+  mse_weight: 1.0
+  l1_weight: 0.0
+
+pretrained:
+  public_checkpoint_path: null
+  variant: ema1
+
+freeze:
+  freeze_t_embedder: false
+  freeze_x_embedder: false
+  freeze_final_layer: false
+  freeze_blocks_before: null

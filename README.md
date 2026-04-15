@@ -73,4 +73,55 @@ python sample_jit.py \
 
 - Public JiT uses `model_ema1` for generation by default. The local tools default to `--variant ema1` for that reason.
 - JiT predicts the clean sample, not DDPM epsilon noise. The scheduler in `schedulers/scheduling_jit_flow.py` keeps that sampling logic explicit.
-- This stage is inference-only. No training loop or 3D data integration is included in the JiT path yet.
+- The class-conditional public-checkpoint sampling path remains inference-focused. The rectangular conditional training stack lives separately under `models/conditional_jit/`, `datasets/`, `training/`, and `tools/`.
+
+## Rectangular Conditional JiT Training
+
+The repository now includes a first-pass training stack for the rectangular conditional JiT model.
+
+### Training Files
+
+- `models/conditional_jit/`: split implementation for geometry helpers, condition tower, adapters, and the main rectangular conditional JiT model.
+- `datasets/`: JSONL manifest dataset, tensor loading, transforms, and collate logic.
+- `training/`: objective builders, optimizer/scheduler setup, train/eval steps, checkpointing, and the simple trainer.
+- `evaluation/`: tensor dumps and preview image generation for debug runs.
+- `tools/inspect_manifest_batch.py`: inspect one batch from a manifest-driven config.
+- `tools/overfit_rectangular_conditional_jit.py`: overfit the first 8 samples of the train split.
+- `tools/train_rectangular_conditional_jit.py`: launch normal single-GPU training from an experiment config.
+
+### Manifest Format
+
+Each JSONL row must contain:
+
+```json
+{
+	"sample_id": "abc_0001",
+	"input_path": "relative/or/absolute/path/to/input.npy",
+	"condition_path": "relative/or/absolute/path/to/condition.npy",
+	"target_path": "relative/or/absolute/path/to/target.npy",
+	"condition_type_id": 0,
+	"meta": {
+		"anything": "optional"
+	}
+}
+```
+
+### Training Entry Points
+
+Inspect one batch:
+
+```bash
+python tools/inspect_manifest_batch.py configs/experiment/exp_b32_sparse_debug.yaml
+```
+
+Overfit the first 8 samples:
+
+```bash
+python tools/overfit_rectangular_conditional_jit.py configs/experiment/exp_b32_sparse_debug.yaml --device cuda
+```
+
+Run normal training:
+
+```bash
+python tools/train_rectangular_conditional_jit.py configs/experiment/exp_b32_sparse_train.yaml --device cuda
+```

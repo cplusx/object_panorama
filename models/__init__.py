@@ -1,5 +1,5 @@
 from .jit_model import JIT_PRESET_CONFIGS, JiTModel, JiTModelOutput, create_jit_model
-from .rectangular_conditional_jit import (
+from .conditional_jit import (
     ConditionStemCollection,
     ConditionTower,
     ConditionTypeStem,
