@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -46,25 +47,27 @@ class RectangularConditionalJiTTests(unittest.TestCase):
             in_context_start=0,
         )
 
-    def _make_model(self, interaction_mode: str) -> RectangularConditionalJiTModel:
-        return RectangularConditionalJiTModel(
-            input_size=(64, 128),
-            patch_size=16,
-            image_in_channels=1,
-            image_out_channels=2,
-            hidden_size=64,
-            depth=4,
-            num_heads=4,
-            bottleneck_dim=16,
-            condition_size=(64, 128),
-            condition_channels_per_type=(5, 6, 7),
-            cond_base_channels=8,
-            cond_bottleneck_dim=12,
-            cond_tower_depth=2,
-            interaction_mode=interaction_mode,
-            interaction_layers=(1, 3),
-            preset_name=None,
-        )
+    def _make_model(self, interaction_mode: str, **overrides) -> RectangularConditionalJiTModel:
+        config = {
+            "input_size": (64, 128),
+            "patch_size": 16,
+            "image_in_channels": 1,
+            "image_out_channels": 2,
+            "hidden_size": 64,
+            "depth": 4,
+            "num_heads": 4,
+            "bottleneck_dim": 16,
+            "condition_size": (64, 128),
+            "condition_channels_per_type": (5, 6, 7),
+            "cond_base_channels": 8,
+            "cond_bottleneck_dim": 12,
+            "cond_tower_depth": 2,
+            "interaction_mode": interaction_mode,
+            "interaction_layers": (1, 3),
+            "preset_name": None,
+        }
+        config.update(overrides)
+        return RectangularConditionalJiTModel(**config)
 
     def _activate_conditioning_path(self, model: RectangularConditionalJiTModel) -> None:
         with torch.no_grad():
@@ -115,18 +118,21 @@ class RectangularConditionalJiTTests(unittest.TestCase):
             depth=2,
             num_heads=4,
             g_token_count=1,
+            num_condition_types=3,
         )
         with torch.no_grad():
             for block in tower.blocks:
                 block.adaLN_modulation[-1].weight.normal_(mean=0.0, std=0.02)
                 block.adaLN_modulation[-1].bias.zero_()
 
-        condition = torch.randn(2, 8, 64, 128, requires_grad=True)
-        timestep_embedding = torch.randn(2, 64, requires_grad=True)
-        global_tokens, condition_tokens, sequence = tower(condition, timestep_embedding)
+        condition = torch.randn(1, 8, 64, 128).repeat(2, 1, 1, 1).requires_grad_()
+        timestep_embedding = torch.randn(1, 64).repeat(2, 1).requires_grad_()
+        condition_type_ids = torch.tensor([0, 1], dtype=torch.long)
+        global_tokens, condition_tokens, sequence = tower(condition, timestep_embedding, condition_type_ids)
         self.assertEqual(tuple(global_tokens.shape), (2, 1, 64))
         self.assertEqual(tuple(condition_tokens.shape), (2, 32, 64))
         self.assertEqual(tuple(sequence.shape), (2, 33, 64))
+        self.assertFalse(torch.allclose(sequence[0], sequence[1]))
 
         dummy = torch.randn(2, 4, 33, 16)
         prefix_before = dummy[:, :, :1, :].clone()
@@ -137,6 +143,7 @@ class RectangularConditionalJiTTests(unittest.TestCase):
         _assert_nonzero_grad(self, condition.grad, "condition tower input")
         _assert_nonzero_grad(self, timestep_embedding.grad, "condition tower timestep embedding")
         _assert_nonzero_grad(self, tower.g_token.grad, "condition tower g token")
+        _assert_nonzero_grad(self, tower.condition_type_embedding.weight.grad, "condition tower type embedding")
 
     def test_sparse_cross_attention_adapter_zero_init_and_branch_grad(self) -> None:
         adapter = SparseCrossAttnAdapter(hidden_size=64, num_heads=4)
@@ -274,6 +281,115 @@ class RectangularConditionalJiTTests(unittest.TestCase):
         _assert_nonzero_grad(self, model.g_proj.mlp[2].weight.grad, "full model g_proj")
         _assert_nonzero_grad(self, model.interaction_blocks["1"].image_qkv.weight.grad, "full model image qkv")
         _assert_nonzero_grad(self, model.interaction_blocks["1"].cond_qkv.weight.grad, "full model cond qkv")
+
+    def test_full_joint_recompute_global_after_joint_updates_conditioning(self) -> None:
+        baseline_model = self._make_model("full_joint_mmdit", recompute_global_after_joint=False)
+        self._activate_conditioning_path(baseline_model)
+        with torch.no_grad():
+            baseline_model.g_proj.mlp[2].weight.normal_(mean=0.0, std=0.05)
+            baseline_model.g_proj.mlp[2].bias.zero_()
+            for adapter in baseline_model.interaction_blocks.values():
+                adapter.alpha.fill_(1.0)
+                adapter.beta.fill_(1.0)
+
+        recompute_model = self._make_model("full_joint_mmdit", recompute_global_after_joint=True)
+        recompute_model.load_state_dict(baseline_model.state_dict())
+
+        sample = torch.randn(2, 1, 64, 128)
+        condition = torch.randn(2, 7, 64, 128)
+        timestep = torch.tensor([0.2, 0.8])
+        condition_type_ids = torch.tensor([0, 2], dtype=torch.long)
+
+        baseline_outputs = baseline_model(
+            sample=sample,
+            timestep=timestep,
+            condition=condition,
+            condition_type_ids=condition_type_ids,
+            return_intermediates=True,
+        )
+        recompute_outputs = recompute_model(
+            sample=sample,
+            timestep=timestep,
+            condition=condition,
+            condition_type_ids=condition_type_ids,
+            return_intermediates=True,
+        )
+
+        self.assertFalse(torch.allclose(baseline_outputs.conditioning, recompute_outputs.conditioning))
+        self.assertFalse(torch.allclose(baseline_outputs.sample, recompute_outputs.sample))
+
+    def test_load_pretrained_jit_backbone_from_public_checkpoint_mock_chain(self) -> None:
+        source_model = self._make_source_jit()
+        mock_state_dict = {f"net.{key}": value.detach().clone() for key, value in source_model.state_dict().items()}
+        mock_state_dict["net.in_context_posemb"] = torch.zeros(1, 0, source_model.hidden_size)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            checkpoint_path = Path(tmp_dir) / "mock_public_jit_checkpoint.pth"
+            torch.save({"model_ema1": mock_state_dict}, checkpoint_path)
+
+            model = self._make_model("sparse_xattn")
+            report = model.load_pretrained_jit_backbone_from_public_checkpoint(
+                checkpoint_path,
+                variant="ema1",
+                preset_name=None,
+            )
+
+        self.assertEqual(report["source"], "public_checkpoint")
+        self.assertEqual(report["load_report"]["missing_key_count"], 0)
+        self.assertEqual(report["load_report"]["unexpected_key_count"], 1)
+        self.assertEqual(report["load_report"]["unexpected_keys"], ["in_context_posemb"])
+        self.assertEqual(report["transplant_report"]["copied_modules"], ["t_embedder", "x_embedder", "blocks", "final_layer"])
+        self.assertEqual(report["inferred"]["depth"], 4)
+        self.assertEqual(report["inferred"]["hidden_size"], 64)
+        self.assertEqual(report["inferred"]["patch_size"], 16)
+        self.assertEqual(report["inferred"]["in_context_len"], 0)
+        self.assertTrue(torch.allclose(model.x_embedder.proj1.weight, source_model.x_embedder.proj1.weight))
+        self.assertTrue(torch.allclose(model.blocks[0].attn.qkv.weight, source_model.blocks[0].attn.qkv.weight))
+
+    def test_target_resolution_patch32_integration_forward_backward(self) -> None:
+        model = self._make_model(
+            "sparse_xattn",
+            input_size=(512, 1024),
+            patch_size=32,
+            hidden_size=32,
+            depth=2,
+            num_heads=4,
+            bottleneck_dim=8,
+            condition_size=(512, 1024),
+            condition_channels_per_type=(3, 3, 3),
+            cond_base_channels=4,
+            cond_bottleneck_dim=8,
+            cond_tower_depth=1,
+            interaction_layers=(1,),
+        )
+        self._activate_conditioning_path(model)
+        with torch.no_grad():
+            model.interaction_blocks["1"].alpha.fill_(1.0)
+
+        self.assertEqual(model.x_embedder.grid_size, (16, 32))
+        sample = torch.randn(1, 1, 512, 1024, requires_grad=True)
+        condition = torch.randn(1, 3, 512, 1024, requires_grad=True)
+        outputs = model(
+            sample=sample,
+            timestep=torch.tensor([0.35]),
+            condition=condition,
+            condition_type_ids=torch.tensor([2], dtype=torch.long),
+            return_intermediates=True,
+        )
+
+        self.assertEqual(tuple(outputs.sample.shape), (1, 2, 512, 1024))
+        self.assertEqual(tuple(outputs.image_tokens.shape), (1, 512, 32))
+        self.assertEqual(tuple(outputs.condition_tokens.shape), (1, 513, 32))
+        self.assertEqual(tuple(outputs.global_tokens.shape), (1, 1, 32))
+
+        loss = F.mse_loss(outputs.sample, torch.randn_like(outputs.sample))
+        loss.backward()
+        _assert_nonzero_grad(self, sample.grad, "target resolution sample input")
+        _assert_nonzero_grad(self, condition.grad, "target resolution condition input")
+        _assert_nonzero_grad(self, model.image_input_adapter.proj.weight.grad, "target resolution input adapter")
+        _assert_nonzero_grad(self, model.image_output_adapter.proj.weight.grad, "target resolution output adapter")
+        _assert_nonzero_grad(self, model.condition_stems.stems[2].net[0].weight.grad, "target resolution condition stem")
+        _assert_nonzero_grad(self, model.g_proj.mlp[2].weight.grad, "target resolution g_proj")
 
 
 if __name__ == "__main__":

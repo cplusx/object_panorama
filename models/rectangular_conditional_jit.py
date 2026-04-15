@@ -222,6 +222,7 @@ class ConditionTower(nn.Module):
         attn_drop: float = 0.0,
         proj_drop: float = 0.0,
         g_token_count: int = 1,
+        num_condition_types: int | None = None,
     ):
         super().__init__()
         self.input_size = _to_2tuple(input_size)
@@ -229,6 +230,7 @@ class ConditionTower(nn.Module):
         self.hidden_size = int(hidden_size)
         self.num_heads = int(num_heads)
         self.g_token_count = int(g_token_count)
+        self.num_condition_types = None if num_condition_types is None else int(num_condition_types)
 
         self.patch_embed = BottleneckPatchEmbed(
             self.input_size,
@@ -241,6 +243,9 @@ class ConditionTower(nn.Module):
         pos_embed = get_2d_sincos_pos_embed_rect(self.hidden_size, self.patch_embed.grid_size)
         self.register_buffer("pos_embed", torch.from_numpy(pos_embed).float().unsqueeze(0), persistent=True)
         self.g_token = nn.Parameter(torch.zeros(1, self.g_token_count, self.hidden_size))
+        self.condition_type_embedding = (
+            nn.Embedding(self.num_condition_types, self.hidden_size) if self.num_condition_types is not None else None
+        )
         self.rope = RectangularVisionRotaryEmbeddingFast(
             dim=self.hidden_size // self.num_heads // 2,
             pt_seq_len=self.patch_embed.grid_size,
@@ -269,6 +274,8 @@ class ConditionTower(nn.Module):
 
         self.apply(_basic_init)
         nn.init.normal_(self.g_token, std=0.02)
+        if self.condition_type_embedding is not None:
+            nn.init.normal_(self.condition_type_embedding.weight, std=0.02)
         nn.init.xavier_uniform_(self.patch_embed.proj1.weight.view(self.patch_embed.proj1.weight.shape[0], -1))
         nn.init.xavier_uniform_(self.patch_embed.proj2.weight.view(self.patch_embed.proj2.weight.shape[0], -1))
         nn.init.constant_(self.patch_embed.proj2.bias, 0)
@@ -280,11 +287,17 @@ class ConditionTower(nn.Module):
         self,
         condition_features: torch.Tensor,
         timestep_embedding: torch.Tensor,
+        condition_type_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         spatial_tokens = self.patch_embed(condition_features)
         spatial_tokens = spatial_tokens + self.pos_embed.to(device=spatial_tokens.device, dtype=spatial_tokens.dtype)
         global_tokens = self.g_token.expand(condition_features.shape[0], -1, -1).to(spatial_tokens.dtype)
         tokens = torch.cat([global_tokens, spatial_tokens], dim=1)
+        if self.condition_type_embedding is not None and condition_type_ids is not None:
+            if condition_type_ids.shape[0] != condition_features.shape[0]:
+                raise ValueError("condition_type_ids must align with the condition batch size")
+            type_embedding = self.condition_type_embedding(condition_type_ids).to(dtype=tokens.dtype)
+            tokens = tokens + type_embedding.unsqueeze(1)
         for block in self.blocks:
             tokens = block(tokens, timestep_embedding, feat_rope=self.rope)
         return tokens[:, : self.g_token_count], tokens[:, self.g_token_count :], tokens
@@ -472,6 +485,7 @@ class RectangularConditionalJiTModel(ModelMixin, ConfigMixin):
         g_token_count: int = 1,
         interaction_mode: str = "sparse_xattn",
         interaction_layers: Sequence[int] | None = None,
+        recompute_global_after_joint: bool = False,
         preset_name: str | None = "JiT-B/32",
     ):
         super().__init__()
@@ -536,6 +550,7 @@ class RectangularConditionalJiTModel(ModelMixin, ConfigMixin):
             attn_drop=attn_drop,
             proj_drop=proj_drop,
             g_token_count=g_token_count,
+            num_condition_types=len(condition_channels_per_type),
         )
         self.g_proj = GlobalConditionProjector(self.hidden_size)
 
@@ -628,10 +643,21 @@ class RectangularConditionalJiTModel(ModelMixin, ConfigMixin):
         timestep_embedding: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         condition_base = self.condition_stems(condition, condition_type_ids)
-        global_tokens, condition_tokens, condition_sequence = self.condition_tower(condition_base, timestep_embedding)
-        global_embedding = self.g_proj(global_tokens)
-        conditioning = timestep_embedding + global_embedding
+        global_tokens, condition_tokens, condition_sequence = self.condition_tower(
+            condition_base,
+            timestep_embedding,
+            condition_type_ids=condition_type_ids,
+        )
+        conditioning = self._compute_global_conditioning(timestep_embedding, global_tokens)
         return global_tokens, condition_tokens, condition_sequence, conditioning
+
+    def _compute_global_conditioning(
+        self,
+        timestep_embedding: torch.Tensor,
+        global_tokens: torch.Tensor,
+    ) -> torch.Tensor:
+        global_embedding = self.g_proj(global_tokens)
+        return timestep_embedding + global_embedding
 
     def forward(
         self,
@@ -658,6 +684,7 @@ class RectangularConditionalJiTModel(ModelMixin, ConfigMixin):
         hidden_states = hidden_states + self.image_pos_embed.to(device=hidden_states.device, dtype=hidden_states.dtype)
 
         interaction_condition_tokens = condition_sequence
+        current_global_tokens = global_tokens
         for index, block in enumerate(self.blocks):
             hidden_states = block(hidden_states, conditioning, feat_rope=self.image_rope)
             if index not in self.interaction_layer_set:
@@ -672,6 +699,9 @@ class RectangularConditionalJiTModel(ModelMixin, ConfigMixin):
                     self.image_rope,
                     self.condition_tower.rope,
                 )
+                current_global_tokens = interaction_condition_tokens[:, : self.condition_tower.g_token_count]
+                if self.config.recompute_global_after_joint:
+                    conditioning = self._compute_global_conditioning(timestep_embedding, current_global_tokens)
 
         patch_predictions = self.final_layer(hidden_states, conditioning)
         sample = self.unpatchify(patch_predictions)
@@ -685,7 +715,7 @@ class RectangularConditionalJiTModel(ModelMixin, ConfigMixin):
             condition_tokens=(interaction_condition_tokens if self.interaction_mode == "full_joint_mmdit" else condition_sequence)
             if return_intermediates
             else None,
-            global_tokens=global_tokens if return_intermediates else None,
+            global_tokens=current_global_tokens if return_intermediates else None,
             conditioning=conditioning if return_intermediates else None,
         )
 
