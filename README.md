@@ -14,6 +14,8 @@ Use the `pytorch3d` conda environment for JiT work. The required runtime package
 - `accelerate`
 - `safetensors`
 - `einops`
+- `pytorch-lightning`
+- `deepspeed` (only when using Lightning DeepSpeed strategies)
 
 ### Files
 
@@ -83,11 +85,31 @@ The repository now includes a first-pass training stack for the rectangular cond
 
 - `models/conditional_jit/`: split implementation for geometry helpers, condition tower, adapters, and the main rectangular conditional JiT model.
 - `datasets/`: JSONL manifest dataset, tensor loading, transforms, and collate logic.
-- `training/`: objective builders, optimizer/scheduler setup, train/eval steps, checkpointing, and the simple trainer.
+- `training/`: objective builders, optimizer/scheduler setup, the smoke/debug trainer, and Lightning formal-training wrappers.
 - `evaluation/`: tensor dumps and preview image generation for debug runs.
 - `tools/inspect_manifest_batch.py`: inspect one batch from a manifest-driven config.
-- `tools/overfit_rectangular_conditional_jit.py`: overfit the first 8 samples of the train split.
-- `tools/train_rectangular_conditional_jit.py`: launch normal single-GPU training from an experiment config.
+- `tools/overfit_rectangular_conditional_jit.py`: tiny overfit smoke entrypoint.
+- `tools/train_lightning_rectangular_conditional_jit.py`: formal training entrypoint via PyTorch Lightning.
+
+### Debug
+
+Inspect one batch:
+
+```bash
+python tools/inspect_manifest_batch.py configs/experiment/exp_b32_sparse_debug.yaml
+```
+
+Run a tiny overfit smoke:
+
+```bash
+python tools/overfit_rectangular_conditional_jit.py configs/experiment/exp_b32_sparse_debug.yaml --device cuda
+```
+
+The following files remain debug-only and are not the formal training path:
+
+- `training/trainer.py`
+- `tools/inspect_manifest_batch.py`
+- `tools/overfit_rectangular_conditional_jit.py`
 
 ### Manifest Format
 
@@ -106,22 +128,34 @@ Each JSONL row must contain:
 }
 ```
 
-### Training Entry Points
+### Formal Training
 
-Inspect one batch:
-
-```bash
-python tools/inspect_manifest_batch.py configs/experiment/exp_b32_sparse_debug.yaml
-```
-
-Overfit the first 8 samples:
+Lightning single-GPU training:
 
 ```bash
-python tools/overfit_rectangular_conditional_jit.py configs/experiment/exp_b32_sparse_debug.yaml --device cuda
+python tools/train_lightning_rectangular_conditional_jit.py \
+	configs/experiment/exp_b32_sparse_train.yaml \
+	--device cuda \
+	--precision 16-mixed \
+	--strategy auto
 ```
 
-Run normal training:
+Lightning resume:
 
 ```bash
-python tools/train_rectangular_conditional_jit.py configs/experiment/exp_b32_sparse_train.yaml --device cuda
+python tools/train_lightning_rectangular_conditional_jit.py \
+	configs/experiment/exp_b32_sparse_train.yaml \
+	--resume runs/exp_b32_sparse_train/checkpoints/last.ckpt
 ```
+
+Lightning + DeepSpeed:
+
+```bash
+python tools/train_lightning_rectangular_conditional_jit.py \
+	configs/experiment/exp_b32_sparse_train.yaml \
+	--device cuda \
+	--precision 16-mixed \
+	--strategy deepspeed_stage_2
+```
+
+Lightning handles mixed precision, resume, grad accumulation, checkpointing, and distributed strategy management. The repository-local simple trainer stays in place only for smoke/debug use.

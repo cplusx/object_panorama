@@ -4,8 +4,18 @@ output_dir: runs
 model: configs/model/rect_cond_jit_b32_sparse.yaml
 data:
   train: configs/data/manifest_example.yaml
-  val: null
+  val: configs/data/manifest_example.yaml
 train: configs/train/base_train.yaml
+
+lightning:
+  accelerator: gpu
+  devices: 1
+  precision: 16-mixed
+  strategy: auto
+  log_every_n_steps: 10
+  val_check_interval: 200
+  limit_train_batches: null
+  limit_val_batches: null
 
 objective:
   name: x0_prediction_linear_bridge

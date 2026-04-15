@@ -7,6 +7,16 @@ data:
   val: null
 train: configs/train/debug_overfit.yaml
 
+lightning:
+  accelerator: gpu
+  devices: 1
+  precision: 16-mixed
+  strategy: auto
+  log_every_n_steps: 10
+  val_check_interval: 50
+  limit_train_batches: null
+  limit_val_batches: null
+
 objective:
   name: paired_supervised
   fixed_timestep: 0.5
