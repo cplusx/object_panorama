@@ -1,0 +1,42 @@
+experiment_name: exp_b32_sparse_real_overfit_lr1e5
+output_dir: /home/devdata/edge3d_data/runs
+
+model: configs/model/rect_cond_jit_b32_sparse.yaml
+data:
+  train: configs/data/manifest_real_train.yaml
+  val: configs/data/manifest_real_val.yaml
+
+train:
+  seed: 0
+  batch_size: 2
+  num_workers: 0
+  max_steps: 200
+  log_every: 10
+  save_every: 50
+  val_every: 0
+  visualize_every: 50
+  grad_clip_norm: 1.0
+  lr: 1.0e-5
+  backbone_lr_mult: 0.1
+  weight_decay: 0.0
+  optimizer: adamw
+  lr_scheduler:
+    name: constant
+
+objective:
+  name: paired_supervised
+  fixed_timestep: 0.5
+
+loss:
+  mse_weight: 1.0
+  l1_weight: 0.0
+
+pretrained:
+  public_checkpoint_path: null
+  variant: ema1
+
+freeze:
+  freeze_t_embedder: false
+  freeze_x_embedder: false
+  freeze_final_layer: false
+  freeze_blocks_before: null

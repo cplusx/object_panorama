@@ -222,6 +222,21 @@ class MeshCanonicalizer:
     def canonicalize_vertices(self, vertices: np.ndarray) -> np.ndarray:
         return self.apply_axis_alignment(self.normalize_vertices(vertices))
 
+    def canonicalize_points(self, points: np.ndarray) -> np.ndarray:
+        points = np.asarray(points, dtype=np.float32)
+        original_shape = points.shape
+        if original_shape[-1] != 3:
+            raise ValueError(f"Expected last dim = 3, got shape {original_shape}")
+        flat = points.reshape(-1, 3)
+        canonical = self.canonicalize_vertices(flat)
+        return canonical.reshape(original_shape)
+
+    def canonicalize_polylines(self, polylines: np.ndarray) -> np.ndarray:
+        polylines = np.asarray(polylines, dtype=np.float32)
+        if polylines.ndim != 3 or polylines.shape[-1] != 3:
+            raise ValueError(f"Expected polylines shape [N, M, 3], got {polylines.shape}")
+        return self.canonicalize_points(polylines)
+
     def canonicalize_mesh(self, mesh: trimesh.Trimesh) -> trimesh.Trimesh:
         vertices = self.canonicalize_vertices(np.asarray(mesh.vertices).astype(np.float32))
         canonical = mesh.copy()
@@ -579,6 +594,7 @@ def export_uid_overlay(
     mesh = model_provider.load_mesh(uid)
     canonical_mesh = canonicalizer.canonicalize_mesh(mesh)
     edge_polylines = dataset.load_edge_polylines(uid).astype(np.float32)
+    edge_polylines = canonicalizer.canonicalize_polylines(edge_polylines)
 
     output_path = Path(output_path)
     exporter = OverlaySceneExporter(
@@ -756,6 +772,7 @@ class Edge3DStudyRunner:
             mesh = self.model_provider.load_mesh(uid)
             canonical_mesh = self.canonicalizer.canonicalize_mesh(mesh)
             edge_polylines = self.dataset.load_edge_polylines(uid).astype(np.float32)
+            edge_polylines = self.canonicalizer.canonicalize_polylines(edge_polylines)
             edge_points = edge_polylines.reshape(-1, 3)
             model_points = canonical_mesh.sample(self.surface_sample_count).astype(np.float32)
 
@@ -849,6 +866,7 @@ class Edge3DStudyRunner:
             mesh = self.model_provider.load_mesh(uid)
             canonical_mesh = self.canonicalizer.canonicalize_mesh(mesh)
             edge_polylines = self.dataset.load_edge_polylines(uid).astype(np.float32)
+            edge_polylines = self.canonicalizer.canonicalize_polylines(edge_polylines)
 
             sample_dir = per_sample_dir / uid
             sample_dir.mkdir(parents=True, exist_ok=True)

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
+from condition_metadata import LEGACY_CONDITION_TYPE_TO_FLAGS
 from training.datamodule import RectangularConditionalJiTDataModule
 
 
@@ -28,6 +29,7 @@ class DataModuleTests(unittest.TestCase):
                         "input_path": input_path.name,
                         "condition_path": condition_path.name,
                         "target_path": target_path.name,
+                        **LEGACY_CONDITION_TYPE_TO_FLAGS[index % 3],
                         "condition_type_id": index % 3,
                         "meta": {"split": "train"},
                     }

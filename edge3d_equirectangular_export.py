@@ -14,6 +14,7 @@ import numpy as np
 from PIL import Image
 import torch
 
+from condition_metadata import condition_variant_specs
 from edge3d_pipeline import (
     DEFAULT_EDGE3D_ALIGNMENT,
     MeshCanonicalizer,
@@ -29,6 +30,17 @@ from inverse_spherical_representation import (
 
 
 FORMAT_VERSION = 2
+CONDITION_VARIANTS = condition_variant_specs()
+
+
+def _condition_variant_metadata() -> dict[str, dict[str, object]]:
+    return {
+        spec["label"]: {
+            **spec["flags"],
+            "legacy_condition_type_id": spec["legacy_condition_type_id"],
+        }
+        for spec in CONDITION_VARIANTS
+    }
 
 
 def _save_image(path: Path, image: np.ndarray) -> None:
@@ -368,6 +380,7 @@ def main() -> None:
         mesh = _load_or_download_mesh(model_provider, uid)
         canonical_mesh = canonicalizer.canonicalize_mesh(mesh)
         edge_polylines = dataset.load_edge_polylines(uid).astype(np.float32)
+        edge_polylines = canonicalizer.canonicalize_polylines(edge_polylines)
 
         model_prep_start = time.perf_counter()
         model_rep = mesh_to_inverse_spherical_representation(
@@ -445,6 +458,7 @@ def main() -> None:
                 "axis_signs": list(alignment.axis_signs),
                 "normalization": alignment.normalization,
             },
+            "condition_variants": _condition_variant_metadata(),
             "model": model_row,
             "edge": edge_row,
         }

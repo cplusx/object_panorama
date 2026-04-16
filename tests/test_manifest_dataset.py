@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from condition_metadata import LEGACY_CONDITION_TYPE_TO_FLAGS
 from datasets import ConditionalJiTManifestDataset, conditional_jit_collate_fn
 
 
@@ -28,6 +29,7 @@ class ManifestDatasetTests(unittest.TestCase):
                         "input_path": input_path.name,
                         "condition_path": condition_path.name,
                         "target_path": target_path.name,
+                        **LEGACY_CONDITION_TYPE_TO_FLAGS[1],
                         "condition_type_id": 1,
                         "meta": {"tag": "demo"},
                     }
@@ -43,6 +45,33 @@ class ManifestDatasetTests(unittest.TestCase):
             self.assertEqual(tuple(sample["condition"].shape), (5, 8, 16))
             self.assertEqual(tuple(sample["target"].shape), (1, 8, 16))
             self.assertEqual(int(sample["condition_type_id"].item()), 1)
+            self.assertEqual(sample["meta"]["condition_flags"], LEGACY_CONDITION_TYPE_TO_FLAGS[1])
+            self.assertEqual(sample["meta"]["condition_label"], "rgb_plus_edge_depth")
+
+    def test_flags_only_manifest_record_infers_legacy_condition_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            tensor_path = root / "tensor.npy"
+            np.save(tensor_path, np.ones((1, 4, 4), dtype=np.float32))
+            manifest_path = root / "manifest.jsonl"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "sample_id": "flags_only",
+                        "input_path": tensor_path.name,
+                        "condition_path": tensor_path.name,
+                        "target_path": tensor_path.name,
+                        **LEGACY_CONDITION_TYPE_TO_FLAGS[2],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            dataset = ConditionalJiTManifestDataset(manifest_path)
+            sample = dataset[0]
+            self.assertEqual(int(sample["condition_type_id"].item()), 2)
+            self.assertEqual(sample["meta"]["condition_label"], "normal_plus_edge_depth")
 
     def test_invalid_condition_type_id_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -74,7 +103,7 @@ class ManifestDatasetTests(unittest.TestCase):
                 "condition": torch.ones(3, 8, 16),
                 "target": torch.zeros(1, 8, 16),
                 "condition_type_id": torch.tensor(0, dtype=torch.long),
-                "meta": {},
+                "meta": {"condition_flags": LEGACY_CONDITION_TYPE_TO_FLAGS[0], "condition_label": "rgb_plus_normal"},
             },
             {
                 "sample_id": "b",
@@ -82,7 +111,10 @@ class ManifestDatasetTests(unittest.TestCase):
                 "condition": torch.ones(5, 8, 16),
                 "target": torch.zeros(1, 8, 16),
                 "condition_type_id": torch.tensor(2, dtype=torch.long),
-                "meta": {},
+                "meta": {
+                    "condition_flags": LEGACY_CONDITION_TYPE_TO_FLAGS[2],
+                    "condition_label": "normal_plus_edge_depth",
+                },
             },
         ]
         collated = conditional_jit_collate_fn(batch, max_condition_channels=6)

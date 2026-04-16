@@ -81,6 +81,7 @@ class SimpleTrainer:
             self.optimizer.zero_grad(set_to_none=True)
             step_output = run_train_step(self.model, batch, self.objective_cfg, self.loss_cfg, self.device)
             step_output.loss_total.backward()
+            grad_norm_total = self._compute_total_grad_norm()
 
             if grad_clip_norm is not None:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=float(grad_clip_norm))
@@ -89,7 +90,14 @@ class SimpleTrainer:
             if self.scheduler is not None:
                 self.scheduler.step()
 
-            train_metrics = self._build_metrics_record(step, "train", step_output.loss_dict)
+            train_metrics = self._build_metrics_record(
+                step,
+                "train",
+                step_output.loss_dict,
+                grad_norm_total=grad_norm_total,
+                pred=step_output.pred,
+                target=step_output.target,
+            )
             self._append_metrics(train_metrics)
 
             if log_every > 0 and step % log_every == 0:
@@ -130,14 +138,51 @@ class SimpleTrainer:
         self.model.train()
         return record
 
-    def _build_metrics_record(self, step: int, split: str, loss_dict: dict[str, torch.Tensor]) -> dict[str, float | int | str]:
+    def _build_metrics_record(
+        self,
+        step: int,
+        split: str,
+        loss_dict: dict[str, torch.Tensor],
+        grad_norm_total: float | None = None,
+        pred: torch.Tensor | None = None,
+        target: torch.Tensor | None = None,
+    ) -> dict[str, float | int | str]:
         scalar_losses = loss_dict_to_floats(loss_dict)
-        return {
+        record: dict[str, float | int | str] = {
             "step": int(step),
             "split": split,
             **scalar_losses,
             "lr_backbone": float(self.optimizer.param_groups[0]["lr"]),
             "lr_new_modules": float(self.optimizer.param_groups[1]["lr"]),
+        }
+        if grad_norm_total is not None:
+            record["grad_norm_total"] = float(grad_norm_total)
+        if pred is not None:
+            record.update(self._tensor_stats(pred, prefix="pred"))
+        if target is not None:
+            record.update(self._tensor_stats(target, prefix="target"))
+        return record
+
+    def _compute_total_grad_norm(self) -> float:
+        total_sq_norm = None
+        for parameter in self.model.parameters():
+            if parameter.grad is None:
+                continue
+            grad_norm = parameter.grad.detach().float().norm(2)
+            if total_sq_norm is None:
+                total_sq_norm = grad_norm.pow(2)
+            else:
+                total_sq_norm = total_sq_norm + grad_norm.pow(2)
+        if total_sq_norm is None:
+            return 0.0
+        return float(total_sq_norm.sqrt().item())
+
+    def _tensor_stats(self, tensor: torch.Tensor, prefix: str) -> dict[str, float]:
+        detached = tensor.detach().float()
+        return {
+            f"{prefix}_min": float(detached.min().item()),
+            f"{prefix}_max": float(detached.max().item()),
+            f"{prefix}_mean": float(detached.mean().item()),
         }
 
     def _append_metrics(self, record: dict[str, Any]) -> None:

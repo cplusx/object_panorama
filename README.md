@@ -121,12 +121,23 @@ Each JSONL row must contain:
 	"input_path": "relative/or/absolute/path/to/input.npy",
 	"condition_path": "relative/or/absolute/path/to/condition.npy",
 	"target_path": "relative/or/absolute/path/to/target.npy",
+	"has_model_rgb": 1,
+	"has_edge_depth": 0,
+	"has_model_normal": 1,
 	"condition_type_id": 0,
 	"meta": {
 		"anything": "optional"
 	}
 }
 ```
+
+Named condition flags are the primary representation for new manifests. `condition_type_id` is legacy compatibility only and, when present, must match the explicit flags.
+
+Legacy compatibility mapping:
+
+- `condition_type_id = 0` means `rgb_plus_normal` and maps to `has_model_rgb=1`, `has_edge_depth=0`, `has_model_normal=1`
+- `condition_type_id = 1` means `rgb_plus_edge_depth` and maps to `has_model_rgb=1`, `has_edge_depth=1`, `has_model_normal=0`
+- `condition_type_id = 2` means `normal_plus_edge_depth` and maps to `has_model_rgb=0`, `has_edge_depth=1`, `has_model_normal=1`
 
 ### Formal Training
 

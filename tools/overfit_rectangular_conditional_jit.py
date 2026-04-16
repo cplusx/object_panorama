@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--num-samples", type=int, default=8)
     parser.add_argument("--max-steps", type=int, default=200)
+    parser.add_argument("--overfit-batch-size", type=int, default=None)
     return parser.parse_args()
 
 
@@ -33,17 +34,22 @@ def main() -> None:
     args = parse_args()
     experiment_cfg = load_yaml_config(args.config)
     _set_seed(int(experiment_cfg["train"].get("seed", 0)))
+    effective_data_train_cfg = _prepare_overfit_data_cfg(experiment_cfg["data"]["train"])
     raw_model_cfg = dict(experiment_cfg["model"])
     effective_model_cfg = _prepare_model_cfg(raw_model_cfg, objective_cfg={"name": "paired_supervised"})
     model = _build_model_from_config(effective_model_cfg)
 
-    train_dataset = build_dataset_from_config(experiment_cfg["data"]["train"])
+    train_dataset = build_dataset_from_config(effective_data_train_cfg)
     subset_size = min(int(args.num_samples), len(train_dataset))
     if subset_size <= 0:
         raise ValueError("Overfit dataset is empty")
     train_dataset = Subset(train_dataset, list(range(subset_size)))
+    overfit_batch_size = subset_size if args.overfit_batch_size is None else int(args.overfit_batch_size)
+    if overfit_batch_size <= 0:
+        raise ValueError("Overfit batch size must be positive")
 
     train_cfg = copy.deepcopy(experiment_cfg["train"])
+    train_cfg["batch_size"] = overfit_batch_size
     train_cfg["max_steps"] = int(args.max_steps)
     train_cfg["log_every"] = 20
     train_cfg["save_every"] = 50
@@ -59,9 +65,9 @@ def main() -> None:
 
     train_loader = build_dataloader_from_config(
         {
-            "batch_size": int(train_cfg["batch_size"]),
+            "batch_size": overfit_batch_size,
             "num_workers": int(train_cfg["num_workers"]),
-            "shuffle": True,
+            "shuffle": False,
             "drop_last": False,
             "pin_memory": str(args.device).startswith("cuda"),
         },
@@ -74,6 +80,9 @@ def main() -> None:
         "fixed_timestep": float(experiment_cfg.get("objective", {}).get("fixed_timestep", 0.5)),
     }
     output_dir = Path(experiment_cfg["output_dir"]) / experiment_cfg["experiment_name"]
+    effective_experiment_cfg = copy.deepcopy(experiment_cfg)
+    effective_experiment_cfg["data"]["train"] = effective_data_train_cfg
+    effective_experiment_cfg["train"] = copy.deepcopy(train_cfg)
     trainer = SimpleTrainer(
         model=model,
         optimizer=optimizer,
@@ -85,7 +94,7 @@ def main() -> None:
         train_cfg=train_cfg,
         device=args.device,
         output_dir=output_dir,
-        config_snapshot=experiment_cfg,
+        config_snapshot=effective_experiment_cfg,
     )
     trainer.fit()
 
@@ -103,6 +112,12 @@ def _prepare_model_cfg(model_cfg: dict, objective_cfg: dict) -> dict:
 
 def _build_model_from_config(model_cfg: dict):
     return create_rectangular_conditional_jit_model(**model_cfg)
+
+
+def _prepare_overfit_data_cfg(data_cfg: dict) -> dict:
+    prepared = copy.deepcopy(data_cfg)
+    prepared["horizontal_flip_p"] = 0.0
+    return prepared
 
 
 def _set_seed(seed: int) -> None:

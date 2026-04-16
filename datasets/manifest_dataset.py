@@ -7,6 +7,7 @@ from typing import Any
 import torch
 from torch.utils.data import Dataset
 
+from condition_metadata import condition_metadata_from_record
 from .tensor_io import load_tensor_file
 
 
@@ -29,6 +30,7 @@ class ConditionalJiTManifestDataset(Dataset):
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         record = self.records[index]
+        condition_meta = condition_metadata_from_record(record)
         input_path = self._resolve_data_path(record["input_path"])
         condition_path = self._resolve_data_path(record["condition_path"])
         target_path = self._resolve_data_path(record["target_path"])
@@ -37,13 +39,18 @@ class ConditionalJiTManifestDataset(Dataset):
         self._assert_file_exists(condition_path, record["sample_id"], "condition_path")
         self._assert_file_exists(target_path, record["sample_id"], "target_path")
 
+        meta = dict(record.get("meta", {}))
+        meta.setdefault("condition_flags", dict(condition_meta["flags"]))
+        meta.setdefault("condition_label", condition_meta["label"])
+        meta.setdefault("legacy_condition_type_id", int(condition_meta["legacy_condition_type_id"]))
+
         sample = {
             "sample_id": record["sample_id"],
             "input": load_tensor_file(input_path),
             "condition": load_tensor_file(condition_path),
             "target": load_tensor_file(target_path),
-            "condition_type_id": torch.tensor(record["condition_type_id"], dtype=torch.long),
-            "meta": dict(record.get("meta", {})),
+            "condition_type_id": torch.tensor(condition_meta["legacy_condition_type_id"], dtype=torch.long),
+            "meta": meta,
         }
         if self.transforms is not None:
             sample = self.transforms(sample)
@@ -64,14 +71,14 @@ class ConditionalJiTManifestDataset(Dataset):
         return records
 
     def _validate_record(self, record: dict[str, Any], line_index: int) -> None:
-        required_keys = ["sample_id", "input_path", "condition_path", "target_path", "condition_type_id"]
+        required_keys = ["sample_id", "input_path", "condition_path", "target_path"]
         for key in required_keys:
             if key not in record:
                 raise ValueError(f"Manifest line {line_index} is missing required key '{key}'")
-        if int(record["condition_type_id"]) not in {0, 1, 2}:
-            raise ValueError(
-                f"Manifest line {line_index} has invalid condition_type_id={record['condition_type_id']}; expected 0, 1, or 2"
-            )
+        try:
+            condition_metadata_from_record(record)
+        except ValueError as exc:
+            raise ValueError(f"Manifest line {line_index} has invalid condition metadata: {exc}") from exc
         if "meta" in record and not isinstance(record["meta"], dict):
             raise ValueError(f"Manifest line {line_index} has non-dict meta field")
 
