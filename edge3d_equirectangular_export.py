@@ -14,7 +14,6 @@ import numpy as np
 from PIL import Image
 import torch
 
-from condition_metadata import condition_variant_specs
 from edge3d_pipeline import (
     DEFAULT_EDGE3D_ALIGNMENT,
     MeshCanonicalizer,
@@ -22,6 +21,7 @@ from edge3d_pipeline import (
     ObjaverseModelProvider,
     load_alignment_from_report,
 )
+from utils.condition_metadata import condition_variant_specs
 from inverse_spherical_representation import (
     InverseSphericalRepresentation,
     mesh_to_inverse_spherical_representation,

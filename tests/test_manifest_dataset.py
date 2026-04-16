@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from condition_metadata import LEGACY_CONDITION_TYPE_TO_FLAGS
 from datasets import ConditionalJiTManifestDataset, conditional_jit_collate_fn
+from utils.condition_metadata import LEGACY_CONDITION_TYPE_TO_FLAGS
 
 
 class ManifestDatasetTests(unittest.TestCase):

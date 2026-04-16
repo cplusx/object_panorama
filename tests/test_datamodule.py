@@ -5,8 +5,8 @@ from pathlib import Path
 
 import numpy as np
 
-from condition_metadata import LEGACY_CONDITION_TYPE_TO_FLAGS
 from training.datamodule import RectangularConditionalJiTDataModule
+from utils.condition_metadata import LEGACY_CONDITION_TYPE_TO_FLAGS
 
 
 class DataModuleTests(unittest.TestCase):

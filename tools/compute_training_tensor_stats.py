@@ -19,9 +19,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from condition_metadata import condition_metadata_from_legacy_type, condition_variant_specs
 from datasets import build_dataset_from_config
 from utils import load_yaml_config
+from utils.condition_metadata import condition_variant_specs
 
 
 PERCENTILE_NAMES = ("p01", "p05", "p50", "p95", "p99")
@@ -511,6 +511,24 @@ def _run_manifest_stats(args: argparse.Namespace) -> None:
     }
     _write_json(output_dir / "summary.json", summary)
     _print_console_summary(groups, condition_groups)
+
+
+def _condition_metadata_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
+    meta = sample.get("meta")
+    if isinstance(meta, dict):
+        label = meta.get("condition_label")
+        flags = meta.get("condition_flags")
+        legacy_condition_type_id = meta.get("legacy_condition_type_id")
+        if label is not None and flags is not None:
+            if legacy_condition_type_id is None:
+                legacy_condition_type_id = int(sample["condition_type_id"])
+            return {
+                "label": str(label),
+                "flags": dict(flags),
+                "legacy_condition_type_id": int(legacy_condition_type_id),
+            }
+
+    return LEGACY_CONDITION_TYPE_TO_VARIANT[int(sample["condition_type_id"])]
 
 
 def _run_equirectangular_stats(args: argparse.Namespace) -> None:

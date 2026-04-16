@@ -7,8 +7,8 @@ from typing import Any
 import torch
 from torch.utils.data import Dataset
 
-from condition_metadata import condition_metadata_from_record
 from .tensor_io import load_tensor_file
+from utils.condition_metadata import condition_metadata_from_record
 
 
 class ConditionalJiTManifestDataset(Dataset):
