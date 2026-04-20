@@ -8,7 +8,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from edge3d_pipeline import DEFAULT_EDGE3D_ALIGNMENT, export_uid_overlay, load_alignment_from_report
+from edge3d.generation.pipeline import DEFAULT_EDGE3D_ALIGNMENT, export_uid_overlay, load_alignment_from_report
 
 
 def parse_rgb(value: str) -> tuple[int, int, int]:

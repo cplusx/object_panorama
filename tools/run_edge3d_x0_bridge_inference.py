@@ -15,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from edge3d_tensor_format import load_sample_modalities
+from edge3d.tensor_format import load_sample_modalities
 from pipeline import Edge3DX0BridgePipeline
 from training.lightning_module import RectangularConditionalJiTLightningModule
 from utils import load_yaml_config

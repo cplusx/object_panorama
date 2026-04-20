@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from reconstruction import save_edge_depth_comparison_pointclouds
+from reconstruction import save_model_target_pred_pointclouds
 
 
 def _normalize_panel(values: np.ndarray) -> np.ndarray:
@@ -35,6 +35,7 @@ def save_edge3d_validation_preview(
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
+    model_depth = torch.nan_to_num(batch["model_depth"], nan=0.0, posinf=0.0, neginf=0.0).detach().cpu()
     target_edge_depth = torch.nan_to_num(batch["edge_depth"], nan=0.0, posinf=0.0, neginf=0.0).detach().cpu()
     pred_edge_depth = pred_edge_depth.detach().cpu()
     resolved_sample_ids = list(sample_ids or batch.get("sample_ids") or [])
@@ -45,6 +46,7 @@ def save_edge3d_validation_preview(
     for index in range(limit):
         sample_dir = output_path / str(resolved_sample_ids[index])
         sample_dir.mkdir(parents=True, exist_ok=True)
+        sample_model = model_depth[index : index + 1]
         sample_pred = pred_edge_depth[index : index + 1]
         sample_target = target_edge_depth[index : index + 1]
 
@@ -69,8 +71,9 @@ def save_edge3d_validation_preview(
         plt.close(figure)
 
         if save_reconstruction:
-            save_edge_depth_comparison_pointclouds(
+            save_model_target_pred_pointclouds(
                 sample_dir,
+                model_depth=sample_model,
                 pred_edge_depth=sample_pred,
                 target_edge_depth=sample_target,
             )

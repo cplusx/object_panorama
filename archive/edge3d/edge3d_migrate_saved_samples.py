@@ -3,7 +3,7 @@ from pathlib import Path
 
 import numpy as np
 
-from edge3d_tensor_format import is_mixed_precision_payload, save_mixed_precision_sample
+from edge3d.tensor_format import is_mixed_precision_payload, save_mixed_precision_sample
 
 
 def parse_args() -> argparse.Namespace:

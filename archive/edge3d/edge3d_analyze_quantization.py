@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from edge3d_tensor_format import load_sample_modalities
+from edge3d.tensor_format import load_sample_modalities
 
 
 @dataclass

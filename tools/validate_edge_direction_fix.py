@@ -16,16 +16,16 @@ REPO_ROOT = SCRIPT_DIR.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from edge3d_pipeline import (  # noqa: E402
+from edge3d.generation.pipeline import (  # noqa: E402
     DEFAULT_EDGE3D_ALIGNMENT,
     MeshCanonicalizer,
     ObjaverseEdgeDataset,
     ObjaverseModelProvider,
     load_alignment_from_report,
 )
-from inverse_spherical_representation import (  # noqa: E402
-    mesh_to_inverse_spherical_representation,
-    polylines_to_inverse_spherical_representation,
+from edge3d.representation.layered_spherical_representation import (  # noqa: E402
+    mesh_to_layered_spherical_representation,
+    polylines_to_layered_spherical_representation,
 )
 
 
@@ -124,7 +124,7 @@ def main() -> None:
     print("canonical mesh radius p99:", canonical_mesh_radius_p99)
     print("raw edge radius p99:", raw_edge_radius_p99)
 
-    model_rep = mesh_to_inverse_spherical_representation(
+    model_rep = mesh_to_layered_spherical_representation(
         canonical_mesh,
         resolution=args.resolution,
         max_hits=args.model_max_hits,
@@ -135,7 +135,7 @@ def main() -> None:
         stop_at_origin=True,
         backend=args.model_backend,
     )
-    edge_rep = polylines_to_inverse_spherical_representation(
+    edge_rep = polylines_to_layered_spherical_representation(
         edge_polylines,
         resolution=args.resolution,
         max_hits=args.edge_max_hits,

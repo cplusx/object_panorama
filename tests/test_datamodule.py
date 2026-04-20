@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from torch.utils.data import Subset
 
-from edge3d_tensor_format import save_mixed_precision_sample
+from edge3d.tensor_format import save_mixed_precision_sample
 from datasets import build_dataloader_from_config, build_dataset_from_config
 from training.datamodule import RectangularConditionalJiTDataModule, _select_validation_indices
 

@@ -24,13 +24,13 @@ def _run(command: list[str], cwd: Path) -> float:
 
 def main() -> None:
     args = parse_args()
-    repo_root = Path(__file__).resolve().parent
+    repo_root = Path(__file__).resolve().parents[2]
     dataset_root = Path(args.dataset_root)
     profile_root = Path(args.profile_root)
     profile_root.mkdir(parents=True, exist_ok=True)
 
     if args.uids_json is None:
-        from edge3d_pipeline import ObjaverseEdgeDataset
+        from edge3d.generation.pipeline import ObjaverseEdgeDataset
 
         dataset = ObjaverseEdgeDataset(dataset_root)
         selected = dataset.available_ids[: args.sample_count]
@@ -44,7 +44,8 @@ def main() -> None:
             "name": "1gpu_1worker",
             "command": [
                 sys.executable,
-                "edge3d_export_training_tensors_parallel.py",
+                "-m",
+                "edge3d.generation.export_training_tensors_parallel",
                 "--dataset-root",
                 str(dataset_root),
                 "--output-dir",
@@ -65,7 +66,8 @@ def main() -> None:
             "name": "2gpu_1worker_each",
             "command": [
                 sys.executable,
-                "edge3d_export_training_tensors_parallel.py",
+                "-m",
+                "edge3d.generation.export_training_tensors_parallel",
                 "--dataset-root",
                 str(dataset_root),
                 "--output-dir",
@@ -86,7 +88,8 @@ def main() -> None:
             "name": "2gpu_2worker_each",
             "command": [
                 sys.executable,
-                "edge3d_export_training_tensors_parallel.py",
+                "-m",
+                "edge3d.generation.export_training_tensors_parallel",
                 "--dataset-root",
                 str(dataset_root),
                 "--output-dir",

@@ -22,7 +22,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 try:
-    from edge3d_pipeline import AxisAlignment, DEFAULT_EDGE3D_ALIGNMENT, MeshCanonicalizer, ObjaverseEdgeDataset
+    from edge3d.generation.pipeline import AxisAlignment, DEFAULT_EDGE3D_ALIGNMENT, MeshCanonicalizer, ObjaverseEdgeDataset
 except ModuleNotFoundError:
     @dataclass(frozen=True)
     class AxisAlignment:

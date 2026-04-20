@@ -856,7 +856,7 @@ def _condition_mapping_from_preset(preset_name: str) -> dict[str, dict[str, Any]
 
 
 def _load_equirectangular_payload(sample_path: Path) -> dict[str, Any]:
-    from edge3d_tensor_format import load_sample_modalities
+    from edge3d.tensor_format import load_sample_modalities
 
     payload = load_sample_modalities(sample_path, decode_model_normal=True)
     payload["edge_depth"] = np.nan_to_num(payload["edge_depth"], nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)

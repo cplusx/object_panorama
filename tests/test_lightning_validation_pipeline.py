@@ -113,19 +113,29 @@ class LightningValidationPipelineTests(unittest.TestCase):
 
             sample_dir = Path(tmp_dir) / "validation_outputs" / "epoch_000001" / "sample-a"
             self.assertTrue((sample_dir / "preview.png").is_file())
+            self.assertTrue((sample_dir / "model_points.ply").is_file())
             self.assertTrue((sample_dir / "pred_edge_depth.pt").is_file())
             self.assertTrue((sample_dir / "target_edge_depth.pt").is_file())
             self.assertTrue((sample_dir / "pred_edge_points.ply").is_file())
             self.assertTrue((sample_dir / "target_edge_points.ply").is_file())
             self.assertTrue((sample_dir / "overlap_pointcloud.glb").is_file())
+            self.assertTrue((sample_dir / "overlap_model_target_pred.glb").is_file())
 
+            model_cloud = trimesh.load(sample_dir / "model_points.ply", force="mesh")
             pred_cloud = trimesh.load(sample_dir / "pred_edge_points.ply", force="mesh")
             target_cloud = trimesh.load(sample_dir / "target_edge_points.ply", force="mesh")
             overlap_scene = trimesh.load(sample_dir / "overlap_pointcloud.glb", force="scene")
+            overlap_model_target_pred_scene = trimesh.load(sample_dir / "overlap_model_target_pred.glb", force="scene")
+            self.assertEqual(len(getattr(model_cloud, "faces", [])), 0)
             self.assertEqual(len(getattr(pred_cloud, "faces", [])), 0)
             self.assertEqual(len(getattr(target_cloud, "faces", [])), 0)
             for geometry in overlap_scene.geometry.values():
                 self.assertEqual(len(getattr(geometry, "faces", [])), 0)
+                self.assertEqual(len(getattr(geometry, "entities", [])), 0)
+            self.assertEqual(len(overlap_model_target_pred_scene.geometry), 3)
+            for geometry in overlap_model_target_pred_scene.geometry.values():
+                self.assertEqual(len(getattr(geometry, "faces", [])), 0)
+                self.assertEqual(len(getattr(geometry, "entities", [])), 0)
 
 
 if __name__ == "__main__":

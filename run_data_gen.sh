@@ -1,5 +1,7 @@
-source activate pytorch3d
-python -u edge3d_export_training_tensors_parallel.py \
+#!/usr/bin/env bash
+set -euo pipefail
+
+python -u -m edge3d.generation.export_training_tensors_parallel \
   --dataset-root /home/devdata/edge3d_data \
   --output-dir /home/devdata/edge3d_data/equirectangular_data \
   --cache-dir /tmp/edge3d_objaverse_cache \

@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from edge3d_tensor_format import load_sample_modalities
+from edge3d.tensor_format import load_sample_modalities
 
 from .tensor_io import ensure_chw_float_tensor
 
