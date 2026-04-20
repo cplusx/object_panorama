@@ -380,7 +380,6 @@ def main() -> None:
         mesh = _load_or_download_mesh(model_provider, uid)
         canonical_mesh = canonicalizer.canonicalize_mesh(mesh)
         edge_polylines = dataset.load_edge_polylines(uid).astype(np.float32)
-        edge_polylines = canonicalizer.canonicalize_polylines(edge_polylines)
 
         model_prep_start = time.perf_counter()
         model_rep = mesh_to_inverse_spherical_representation(

@@ -231,6 +231,11 @@ class MeshCanonicalizer:
         canonical = self.canonicalize_vertices(flat)
         return canonical.reshape(original_shape)
 
+    # WARNING:
+    # Do not use this for Edge3D exported edge polylines.
+    # Edge3D edge polylines are already in the coordinate system used by
+    # canonicalized meshes after the selected global alignment.
+    # Applying this again will swap/flip axes a second time.
     def canonicalize_polylines(self, polylines: np.ndarray) -> np.ndarray:
         polylines = np.asarray(polylines, dtype=np.float32)
         if polylines.ndim != 3 or polylines.shape[-1] != 3:
@@ -594,7 +599,6 @@ def export_uid_overlay(
     mesh = model_provider.load_mesh(uid)
     canonical_mesh = canonicalizer.canonicalize_mesh(mesh)
     edge_polylines = dataset.load_edge_polylines(uid).astype(np.float32)
-    edge_polylines = canonicalizer.canonicalize_polylines(edge_polylines)
 
     output_path = Path(output_path)
     exporter = OverlaySceneExporter(
@@ -772,7 +776,6 @@ class Edge3DStudyRunner:
             mesh = self.model_provider.load_mesh(uid)
             canonical_mesh = self.canonicalizer.canonicalize_mesh(mesh)
             edge_polylines = self.dataset.load_edge_polylines(uid).astype(np.float32)
-            edge_polylines = self.canonicalizer.canonicalize_polylines(edge_polylines)
             edge_points = edge_polylines.reshape(-1, 3)
             model_points = canonical_mesh.sample(self.surface_sample_count).astype(np.float32)
 
@@ -866,7 +869,6 @@ class Edge3DStudyRunner:
             mesh = self.model_provider.load_mesh(uid)
             canonical_mesh = self.canonicalizer.canonicalize_mesh(mesh)
             edge_polylines = self.dataset.load_edge_polylines(uid).astype(np.float32)
-            edge_polylines = self.canonicalizer.canonicalize_polylines(edge_polylines)
 
             sample_dir = per_sample_dir / uid
             sample_dir.mkdir(parents=True, exist_ok=True)

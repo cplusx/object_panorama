@@ -6,6 +6,6 @@ python -u edge3d_export_training_tensors_parallel.py \
   --start-idx 0 \
   --end-idx 30000 \
   --gpu-ids 0,1 \
-  --workers-per-gpu 5 \
+  --workers-per-gpu 10 \
   --summary-every 50 \
   --download-timeout-sec 60

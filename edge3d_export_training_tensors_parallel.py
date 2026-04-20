@@ -131,7 +131,6 @@ def _worker_loop(
             mesh = _load_or_download_mesh(model_provider, uid, download_timeout_sec=download_timeout_sec)
             canonical_mesh = canonicalizer.canonicalize_mesh(mesh)
             edge_polylines = dataset.load_edge_polylines(uid).astype(np.float32)
-            edge_polylines = canonicalizer.canonicalize_polylines(edge_polylines)
 
             model_rep = mesh_to_inverse_spherical_representation(
                 canonical_mesh,
