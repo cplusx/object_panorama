@@ -23,7 +23,7 @@ class TrainStepTests(unittest.TestCase):
             num_heads=4,
             bottleneck_dim=16,
             condition_size=(64, 128),
-            condition_channels_per_type=(14, 14, 14),
+            condition_channels_per_type=(20, 20, 20),
             cond_base_channels=8,
             cond_bottleneck_dim=12,
             cond_tower_depth=2,
@@ -50,16 +50,24 @@ class TrainStepTests(unittest.TestCase):
 
         batch = {
             "sample_ids": ["a", "b"],
-            "model_rgb": torch.randn(2, 6, 64, 128),
-            "model_depth": torch.randn(2, 2, 64, 128),
-            "model_normal": torch.randn(2, 6, 64, 128),
+            "model_rgb": torch.randn(2, 15, 64, 128),
+            "model_depth": torch.randn(2, 5, 64, 128),
+            "model_normal": torch.randn(2, 15, 64, 128),
             "edge_depth": torch.randn(2, 3, 64, 128),
             "meta": [{}, {}],
         }
         output = run_train_step(
             model,
             batch,
-            objective_cfg={"name": "flow_matching", "t_min": 0.0, "t_max": 1.0, "noise_scale": 1.0},
+            objective_cfg={
+                "name": "flow_matching",
+                "t_min": 0.0,
+                "t_max": 1.0,
+                "noise_scale": 1.0,
+                "use_model_rgb": False,
+                "use_model_depth": True,
+                "use_model_normal": True,
+            },
             loss_cfg={"mse_weight": 1.0, "l1_weight": 0.0},
             device="cpu",
         )
@@ -67,6 +75,7 @@ class TrainStepTests(unittest.TestCase):
         self.assertIsNotNone(output.loss_total)
         self.assertEqual(tuple(output.target.shape), (2, 3, 64, 128))
         self.assertEqual(tuple(output.sample.shape), (2, 3, 64, 128))
+        self.assertEqual(tuple(output.condition.shape), (2, 20, 64, 128))
 
         output.loss_total.backward()
         _assert_nonzero_grad(self, model.g_proj.mlp[2].weight.grad, "g_proj")

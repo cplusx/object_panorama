@@ -2,11 +2,29 @@ import unittest
 
 import torch
 
+from training import build_edge3d_condition
 from training.lightning_module import RectangularConditionalJiTLightningModule
 
 
-class LightningModuleTests(unittest.TestCase):
-    def test_training_step_runs_on_fake_batch(self) -> None:
+def _make_fake_batch() -> dict[str, torch.Tensor | list]:
+    return {
+        "sample_ids": ["a", "b"],
+        "model_rgb": torch.randn(2, 15, 64, 128),
+        "model_depth": torch.randn(2, 5, 64, 128),
+        "model_normal": torch.randn(2, 15, 64, 128),
+        "edge_depth": torch.randn(2, 3, 64, 128),
+        "meta": [{}, {}],
+    }
+
+
+class Edge3DConditionChannelTests(unittest.TestCase):
+    def test_default_condition_channels_is_20(self) -> None:
+        torch.manual_seed(0)
+        batch = _make_fake_batch()
+        condition = build_edge3d_condition(batch)
+        self.assertEqual(tuple(condition.shape), (2, 20, 64, 128))
+
+    def test_lightning_module_raises_if_model_still_expects_35_channels(self) -> None:
         torch.manual_seed(0)
         module = RectangularConditionalJiTLightningModule(
             model_cfg={
@@ -19,7 +37,7 @@ class LightningModuleTests(unittest.TestCase):
                 "num_heads": 4,
                 "bottleneck_dim": 16,
                 "condition_size": (64, 128),
-                "condition_channels_per_type": (20,),
+                "condition_channels_per_type": (35,),
                 "cond_base_channels": 8,
                 "cond_bottleneck_dim": 12,
                 "cond_tower_depth": 2,
@@ -49,19 +67,11 @@ class LightningModuleTests(unittest.TestCase):
             pretrained_cfg={},
         )
 
-        batch = {
-            "sample_ids": ["a", "b"],
-            "model_rgb": torch.randn(2, 15, 64, 128),
-            "model_depth": torch.randn(2, 5, 64, 128),
-            "model_normal": torch.randn(2, 15, 64, 128),
-            "edge_depth": torch.randn(2, 3, 64, 128),
-            "meta": [{}, {}],
-        }
-
-        loss = module.training_step(batch, batch_idx=0)
-        self.assertTrue(torch.is_tensor(loss))
-        self.assertEqual(loss.ndim, 0)
-        self.assertTrue(torch.isfinite(loss))
+        with self.assertRaisesRegex(
+            ValueError,
+            "Condition channel mismatch: model expects 35, but objective built 20",
+        ):
+            module.training_step(_make_fake_batch(), batch_idx=0)
 
 
 if __name__ == "__main__":

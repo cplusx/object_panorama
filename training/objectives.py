@@ -8,12 +8,39 @@ import torch.nn.functional as F
 from .types import ModelInputBatch
 
 
+def build_edge3d_condition(
+    batch: dict[str, Any],
+    *,
+    use_model_rgb: bool = False,
+    use_model_depth: bool = True,
+    use_model_normal: bool = True,
+) -> torch.Tensor:
+    parts = []
+
+    if use_model_rgb:
+        parts.append(torch.nan_to_num(batch["model_rgb"], nan=0.0, posinf=0.0, neginf=0.0))
+
+    if use_model_depth:
+        parts.append(torch.nan_to_num(batch["model_depth"], nan=0.0, posinf=0.0, neginf=0.0))
+
+    if use_model_normal:
+        parts.append(torch.nan_to_num(batch["model_normal"], nan=0.0, posinf=0.0, neginf=0.0))
+
+    if not parts:
+        raise ValueError("At least one condition modality must be enabled")
+
+    return torch.cat(parts, dim=1)
+
+
 def build_jit_flow_matching_batch(
     batch: dict[str, Any],
     t_min: float,
     t_max: float,
     noise_scale: float = 1.0,
     condition_type_id: int = 0,
+    use_model_rgb: bool = False,
+    use_model_depth: bool = True,
+    use_model_normal: bool = True,
 ) -> ModelInputBatch:
     x0 = torch.nan_to_num(batch["edge_depth"], nan=0.0, posinf=0.0, neginf=0.0)
     if x0.shape[1] != 3:
@@ -24,13 +51,11 @@ def build_jit_flow_matching_batch(
     timestep_view = timestep.view(-1, 1, 1, 1)
     x_t = (1.0 - timestep_view) * x0 + timestep_view * noise
 
-    condition = torch.cat(
-        [
-            torch.nan_to_num(batch["model_rgb"], nan=0.0, posinf=0.0, neginf=0.0),
-            torch.nan_to_num(batch["model_depth"], nan=0.0, posinf=0.0, neginf=0.0),
-            torch.nan_to_num(batch["model_normal"], nan=0.0, posinf=0.0, neginf=0.0),
-        ],
-        dim=1,
+    condition = build_edge3d_condition(
+        batch,
+        use_model_rgb=use_model_rgb,
+        use_model_depth=use_model_depth,
+        use_model_normal=use_model_normal,
     )
     condition_type_ids = torch.full(
         (x0.shape[0],),

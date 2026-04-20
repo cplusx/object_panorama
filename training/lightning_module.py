@@ -99,6 +99,7 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
 
     def _shared_step(self, batch: dict[str, Any]) -> dict[str, Any]:
         model_input = _build_model_input_batch(batch, self.objective_cfg)
+        _validate_condition_channels(self.model_cfg, model_input.condition)
         model_output = self.model(
             sample=model_input.sample,
             timestep=model_input.timestep,
@@ -161,10 +162,32 @@ def _build_model_input_batch(batch: dict[str, Any], objective_cfg: dict[str, Any
         t_max=float(objective_cfg.get("t_max", 1.0)),
         noise_scale=float(objective_cfg.get("noise_scale", 1.0)),
         condition_type_id=int(objective_cfg.get("condition_type_id", 0)),
+        use_model_rgb=bool(objective_cfg.get("use_model_rgb", False)),
+        use_model_depth=bool(objective_cfg.get("use_model_depth", True)),
+        use_model_normal=bool(objective_cfg.get("use_model_normal", True)),
     )
 
 
 def _prepare_model_cfg(model_cfg: dict[str, Any], objective_cfg: dict[str, Any]) -> dict[str, Any]:
     prepared = copy.deepcopy(model_cfg)
     prepared.pop("name", None)
+    condition_channels_per_type = prepared.get("condition_channels_per_type")
+    if condition_channels_per_type is not None:
+        values = [int(value) for value in condition_channels_per_type]
+        if len(values) == 1:
+            prepared["condition_channels_per_type"] = [values[0], values[0], values[0]]
+        elif len(values) != 3:
+            raise ValueError(
+                "RectangularConditionalJiT config must provide either 1 or 3 condition channel entries"
+            )
     return prepared
+
+
+def _validate_condition_channels(model_cfg: dict[str, Any], condition) -> None:
+    expected_condition_channels = int(model_cfg["condition_channels_per_type"][0])
+    actual_condition_channels = int(condition.shape[1])
+    if actual_condition_channels != expected_condition_channels:
+        raise ValueError(
+            f"Condition channel mismatch: model expects {expected_condition_channels}, "
+            f"but objective built {actual_condition_channels}"
+        )

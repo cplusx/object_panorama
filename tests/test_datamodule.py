@@ -48,7 +48,7 @@ class DataModuleTests(unittest.TestCase):
                 train_data_cfg=data_cfg,
                 val_data_cfg=data_cfg,
                 train_cfg={"batch_size": 2, "num_workers": 0},
-                max_condition_channels=35,
+                max_condition_channels=20,
             )
             datamodule.setup(stage="fit")
 

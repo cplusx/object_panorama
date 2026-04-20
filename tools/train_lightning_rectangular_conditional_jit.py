@@ -66,12 +66,13 @@ def main() -> None:
     checkpoint_dir = output_dir / "checkpoints"
     logger = CSVLogger(save_dir=str(output_dir), name="csv_logs")
     callbacks = _build_callbacks(checkpoint_dir, enable_val_monitor=experiment_cfg["data"].get("val") is not None)
+    precision = _resolve_precision(args.precision, lightning_cfg.get("precision", "32-true"))
 
     trainer_kwargs = {
         "default_root_dir": str(output_dir),
         "accelerator": _resolve_accelerator(args.device, lightning_cfg.get("accelerator", "gpu")),
         "devices": lightning_cfg.get("devices", 1),
-        "precision": args.precision or lightning_cfg.get("precision", "16-mixed"),
+        "precision": precision,
         "strategy": args.strategy or lightning_cfg.get("strategy", "auto"),
         "log_every_n_steps": int(lightning_cfg.get("log_every_n_steps", 10)),
         "max_steps": int(train_cfg["max_steps"]),
@@ -119,6 +120,17 @@ def _resolve_limit(cli_value: str | None, config_value):
     if parsed.is_integer():
         return int(parsed)
     return parsed
+
+
+def _resolve_precision(cli_precision: str | None, configured_precision: str | None) -> str:
+    precision = cli_precision if cli_precision is not None else configured_precision
+    precision_str = str(precision).strip().lower()
+    forbidden = {"16", "16-mixed", "bf16", "bf16-mixed", "mixed"}
+    if precision_str in forbidden:
+        raise ValueError("Mixed precision is disabled for this project. Use fp32 / 32-true only.")
+    if precision_str not in {"32", "32-true", "fp32"}:
+        raise ValueError("Only fp32 / 32-true precision is supported for this project.")
+    return "32-true"
 
 
 if __name__ == "__main__":

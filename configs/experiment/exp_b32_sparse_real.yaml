@@ -1,7 +1,7 @@
 experiment_name: exp_b32_sparse_real
 output_dir: /home/devdata/edge3d_data/runs
 
-model: configs/model/rect_cond_jit_b32_sparse.yaml
+model: configs/model/rect_cond_jit_b32_edge3d_depth_normal.yaml
 data:
   train: configs/data/manifest_real_train.yaml
   val: configs/data/manifest_real_val.yaml
@@ -10,7 +10,7 @@ train: configs/train/debug_overfit.yaml
 lightning:
   accelerator: gpu
   devices: 1
-  precision: 16-mixed
+  precision: 32-true
   strategy: auto
   log_every_n_steps: 10
   val_check_interval: 10
@@ -23,6 +23,9 @@ objective:
   t_max: 1.0
   noise_scale: 1.0
   condition_type_id: 0
+  use_model_rgb: false
+  use_model_depth: true
+  use_model_normal: true
 
 loss:
   mse_weight: 1.0

@@ -137,12 +137,11 @@ For the modality-native training path, the dataloader reads one `.npz` sample an
 The training module then builds the actual tensors used by the model:
 
 - `target = edge_depth` with `3` hits
-- `condition = concat(model_rgb, model_depth, model_normal)`
+- `condition = concat(model_depth, model_normal)`
 - `sample = (1 - t) * target + t * noise`
 
-Current condition channel count is `35`:
+Current default condition channel count is `20`:
 
-- `15` from `model_rgb`
 - `5` from `model_depth`
 - `15` from `model_normal`
 
@@ -156,7 +155,7 @@ Lightning single-GPU training:
 python tools/train_lightning_rectangular_conditional_jit.py \
 	configs/experiment/exp_b32_sparse_train.yaml \
 	--device cuda \
-	--precision 16-mixed \
+	--precision 32-true \
 	--strategy auto
 ```
 
@@ -174,8 +173,8 @@ Lightning + DeepSpeed:
 python tools/train_lightning_rectangular_conditional_jit.py \
 	configs/experiment/exp_b32_sparse_train.yaml \
 	--device cuda \
-	--precision 16-mixed \
+	--precision 32-true \
 	--strategy deepspeed_stage_2
 ```
 
-Lightning handles mixed precision, resume, grad accumulation, checkpointing, and distributed strategy management. The repository-local simple trainer stays in place only for smoke/debug use.
+Lightning handles fp32 training, resume, grad accumulation, checkpointing, and distributed strategy management. The repository-local simple trainer stays in place only for smoke/debug use.
