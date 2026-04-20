@@ -177,5 +177,4 @@ pretrained_weights
 !pretrained_weights/.gitkeep
 jit_samples/
 runs
-data
 analysis

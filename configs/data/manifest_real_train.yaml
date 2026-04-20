@@ -1,0 +1,3 @@
+dataset_type: edge3d_modalities
+manifest_path: data/manifest_real_train.jsonl
+root_dir: /home/viplab/jiaxin/object_panorama/analysis/edge3d_canonical_edge_100/training_tensors_gpu
