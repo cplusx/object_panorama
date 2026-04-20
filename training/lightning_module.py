@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 from typing import Any
+
+import torch
 
 try:
     import lightning.pytorch as pl
 except ImportError:
     import pytorch_lightning as pl
 
+from evaluation import save_edge3d_validation_preview
+from inference import Edge3DX0BridgePipeline
 from models import RectangularConditionalJiTModel, create_rectangular_conditional_jit_model
 
 from .lr_scheduler_builder import build_lr_scheduler
@@ -27,6 +32,7 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
         optim_cfg: dict[str, Any],
         freeze_cfg: dict[str, Any] | None,
         pretrained_cfg: dict[str, Any] | None,
+        validation_cfg: dict[str, Any] | None = None,
     ):
         super().__init__()
         self.model_cfg = copy.deepcopy(model_cfg)
@@ -35,6 +41,7 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
         self.optim_cfg = copy.deepcopy(optim_cfg)
         self.freeze_cfg = copy.deepcopy(freeze_cfg or {})
         self.pretrained_cfg = copy.deepcopy(pretrained_cfg or {})
+        self.validation_cfg = copy.deepcopy(validation_cfg or {})
 
         effective_model_cfg = _prepare_model_cfg(self.model_cfg, self.objective_cfg)
         if effective_model_cfg.get("preset_name") is None:
@@ -59,6 +66,7 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
                 "optim_cfg": self.optim_cfg,
                 "freeze_cfg": self.freeze_cfg,
                 "pretrained_cfg": self.pretrained_cfg,
+                "validation_cfg": self.validation_cfg,
             }
         )
 
@@ -68,9 +76,25 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
         return loss_dict["loss_total"]
 
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> Any:
-        loss_dict = self._shared_step(batch)
-        self._log_losses("val", loss_dict, batch_size=int(batch["edge_depth"].shape[0]))
-        return loss_dict["loss_total"]
+        pipeline = Edge3DX0BridgePipeline(self.model, self.objective_cfg)
+        num_steps = int(self.validation_cfg.get("num_inference_steps", 20))
+        output = pipeline.generate(batch, num_steps=num_steps, return_intermediates=False)
+
+        _validate_condition_channels(self.model_cfg, int(output["condition_channels"]))
+        pred = output["pred_edge_depth"]
+        target = torch.nan_to_num(batch["edge_depth"], nan=0.0, posinf=0.0, neginf=0.0).to(
+            device=pred.device,
+            dtype=pred.dtype,
+        )
+        infer_loss_dict = compute_prediction_losses(pred, target, self.loss_cfg)
+        metrics = {
+            "val/infer_loss_total": infer_loss_dict["loss_total"],
+            "val/infer_mse": infer_loss_dict["loss_mse"],
+            "val/infer_l1": infer_loss_dict["loss_l1"],
+        }
+        self._log_metric_dict(metrics, batch_size=int(batch["edge_depth"].shape[0]), prog_bar_key="val/infer_loss_total")
+        self._maybe_save_validation_preview(batch_idx, batch, pred)
+        return metrics
 
     def configure_optimizers(self):
         optimizer = build_optimizer(self.model, self.optim_cfg)
@@ -142,6 +166,37 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
             sync_dist=sync_dist,
         )
 
+    def _log_metric_dict(self, metrics: dict[str, torch.Tensor], batch_size: int, prog_bar_key: str | None = None) -> None:
+        if getattr(self, "_trainer", None) is None:
+            return
+
+        sync_dist = bool(getattr(self.trainer, "world_size", 1) > 1)
+        for name, value in metrics.items():
+            self.log(
+                name,
+                value,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=name == prog_bar_key,
+                batch_size=batch_size,
+                sync_dist=sync_dist,
+            )
+
+    def _maybe_save_validation_preview(self, batch_idx: int, batch: dict[str, Any], pred_edge_depth: torch.Tensor) -> None:
+        if batch_idx != 0 or getattr(self, "_trainer", None) is None:
+            return
+
+        save_every = int(self.validation_cfg.get("save_preview_every_n_steps", 0))
+        if save_every <= 0:
+            return
+
+        step = int(getattr(self, "global_step", 0))
+        if step % save_every != 0:
+            return
+
+        output_dir = Path(self.trainer.default_root_dir) / "validation_previews" / f"step_{step:06d}"
+        save_edge3d_validation_preview(output_dir, batch, pred_edge_depth, max_items=2)
+
     def _estimate_total_steps(self) -> int | None:
         trainer = getattr(self, "_trainer", None)
         if trainer is None:
@@ -183,9 +238,9 @@ def _prepare_model_cfg(model_cfg: dict[str, Any], objective_cfg: dict[str, Any])
     return prepared
 
 
-def _validate_condition_channels(model_cfg: dict[str, Any], condition) -> None:
+def _validate_condition_channels(model_cfg: dict[str, Any], condition: torch.Tensor | int) -> None:
     expected_condition_channels = int(model_cfg["condition_channels_per_type"][0])
-    actual_condition_channels = int(condition.shape[1])
+    actual_condition_channels = int(condition if isinstance(condition, int) else condition.shape[1])
     if actual_condition_channels != expected_condition_channels:
         raise ValueError(
             f"Condition channel mismatch: model expects {expected_condition_channels}, "

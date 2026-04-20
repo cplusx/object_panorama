@@ -76,7 +76,7 @@ class ReconstructionStats:
 class ReconstructionResult:
     uid: str
     npz_path: str
-    reconstructed_overlap_pointcloud_path: str
+    overlap_pointcloud_glb_path: str
     reference_model_pointcloud_path: str | None
     reference_vs_reconstructed_pointcloud_path: str | None
     model_pointcloud_path: str
@@ -200,6 +200,28 @@ def export_point_cloud(points: np.ndarray, colors_rgb: np.ndarray, output_path: 
     cloud.export(str(output_path))
 
 
+def export_overlap_pointcloud_glb(
+    model_points: np.ndarray,
+    model_colors: np.ndarray,
+    edge_points: np.ndarray,
+    edge_colors: np.ndarray,
+    output_path: Path,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    scene = trimesh.Scene()
+    if len(model_points) > 0:
+        scene.add_geometry(
+            trimesh.PointCloud(vertices=np.asarray(model_points, dtype=np.float32), colors=to_rgba_uint8(model_colors)),
+            node_name="model_points",
+        )
+    if len(edge_points) > 0:
+        scene.add_geometry(
+            trimesh.PointCloud(vertices=np.asarray(edge_points, dtype=np.float32), colors=to_rgba_uint8(edge_colors)),
+            node_name="edge_points",
+        )
+    scene.export(str(output_path))
+
+
 def export_combined_point_cloud(
     point_sets: list[np.ndarray],
     color_sets: list[np.ndarray],
@@ -313,18 +335,20 @@ def reconstruct_equirectangular_npz_to_pointclouds(
     model_points, model_colors = decode_model_points_and_colors(sample)
     edge_points, edge_colors, edge_point_counts_per_hit = decode_edge_points(sample)
 
-    reconstructed_overlap_pointcloud_path = sample_dir / f"{uid}_reconstructed_overlap.ply"
+    overlap_pointcloud_glb_path = sample_dir / "overlap_pointcloud.glb"
     reference_model_pointcloud_path: Path | None = None
     reference_vs_reconstructed_pointcloud_path: Path | None = None
-    model_pointcloud_path = sample_dir / f"{uid}_reconstructed_model.ply"
-    edge_pointcloud_path = sample_dir / f"{uid}_reconstructed_edge.ply"
+    model_pointcloud_path = sample_dir / "model_points.ply"
+    edge_pointcloud_path = sample_dir / "edge_points.ply"
 
     export_point_cloud(model_points, model_colors, model_pointcloud_path)
     export_point_cloud(edge_points, edge_colors, edge_pointcloud_path)
-    export_combined_point_cloud(
-        point_sets=[model_points, edge_points],
-        color_sets=[model_colors, edge_colors],
-        output_path=reconstructed_overlap_pointcloud_path,
+    export_overlap_pointcloud_glb(
+        model_points=model_points,
+        model_colors=model_colors,
+        edge_points=edge_points,
+        edge_colors=edge_colors,
+        output_path=overlap_pointcloud_glb_path,
     )
 
     model_stats = asdict(compute_layer_stats(np.asarray(sample["model_depth"], dtype=np.float32)))
@@ -379,7 +403,7 @@ def reconstruct_equirectangular_npz_to_pointclouds(
     result = ReconstructionResult(
         uid=uid,
         npz_path=str(npz_path),
-        reconstructed_overlap_pointcloud_path=str(reconstructed_overlap_pointcloud_path),
+        overlap_pointcloud_glb_path=str(overlap_pointcloud_glb_path),
         reference_model_pointcloud_path=str(reference_model_pointcloud_path) if reference_model_pointcloud_path is not None else None,
         reference_vs_reconstructed_pointcloud_path=str(reference_vs_reconstructed_pointcloud_path) if reference_vs_reconstructed_pointcloud_path is not None else None,
         model_pointcloud_path=str(model_pointcloud_path),
@@ -483,7 +507,7 @@ def write_summary(output_dir: Path, results: list[dict[str, Any]]) -> None:
         row = {
             "uid": result["uid"],
             "npz_path": result["npz_path"],
-            "reconstructed_overlap_pointcloud_path": result["reconstructed_overlap_pointcloud_path"],
+            "overlap_pointcloud_glb_path": result["overlap_pointcloud_glb_path"],
             "reference_model_pointcloud_path": result.get("reference_model_pointcloud_path"),
             "reference_vs_reconstructed_pointcloud_path": result.get("reference_vs_reconstructed_pointcloud_path"),
             "model_pointcloud_path": result["model_pointcloud_path"],

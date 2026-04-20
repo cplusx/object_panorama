@@ -17,6 +17,10 @@ lightning:
   limit_train_batches: null
   limit_val_batches: null
 
+validation:
+  num_inference_steps: 20
+  save_preview_every_n_steps: 0
+
 objective:
   name: flow_matching
   t_min: 0.0

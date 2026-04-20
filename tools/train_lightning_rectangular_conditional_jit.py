@@ -54,6 +54,7 @@ def main() -> None:
         optim_cfg=train_cfg,
         freeze_cfg=dict(experiment_cfg.get("freeze", {})),
         pretrained_cfg=dict(experiment_cfg.get("pretrained", {})),
+        validation_cfg=dict(experiment_cfg.get("validation", {})),
     )
     datamodule = RectangularConditionalJiTDataModule(
         train_data_cfg=dict(experiment_cfg["data"]["train"]),
@@ -99,7 +100,7 @@ def _build_callbacks(checkpoint_dir: Path, enable_val_monitor: bool) -> list:
             ModelCheckpoint(
                 dirpath=str(checkpoint_dir),
                 save_top_k=1,
-                monitor="val/loss_total",
+                monitor="val/infer_loss_total",
                 mode="min",
             ),
         )
