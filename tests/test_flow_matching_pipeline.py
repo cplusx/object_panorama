@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import torch
 
-from inference import Edge3DX0BridgePipeline
+from pipeline import Edge3DX0BridgePipeline
 
 
 class _DeterministicConditionModel(torch.nn.Module):
@@ -64,6 +64,8 @@ class FlowMatchingPipelineTests(unittest.TestCase):
         self.assertTrue(torch.equal(output["initial_noise"], noise))
         self.assertEqual(output["num_steps"], 4)
         self.assertEqual(output["condition_channels"], 20)
+        self.assertEqual(output["effective_inference_dtype"], "float32")
+        self.assertEqual(output["pred_edge_depth"].dtype, torch.float32)
         self.assertEqual(len(output["intermediates"]), 4)
         self.assertTrue(model.training)
 

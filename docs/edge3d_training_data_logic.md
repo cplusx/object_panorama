@@ -107,13 +107,13 @@ That sample was copied from the canonical-edge export under:
 
 - `analysis/edge3d_canonical_edge_100/training_tensors_gpu/00001ec0d78549e1b8c2083a06105c29.npz`
 
-The debug manifest is:
+The current overfit manifest cache is:
 
-- `data/train_manifest.jsonl`
+- `/home/devdata/edge3d_data/manifest_cache/edge3d_overfit.jsonl`
 
-And the debug data config is:
+And the current overfit data config is:
 
-- `configs/data/manifest_example.yaml`
+- `configs/data/edge3d_overfit.yaml`
 
 ## 7. Current Real Subset Path
 
@@ -125,8 +125,8 @@ They now read `.npz` tensors directly from:
 
 through:
 
-- `data/manifest_real_train.jsonl`
-- `data/manifest_real_val.jsonl`
+- `/home/devdata/edge3d_data/manifest_cache/edge3d_train.jsonl`
+- `/home/devdata/edge3d_data/manifest_cache/edge3d_val.jsonl`
 
 So the real subset and the debug overfit path now use the same modality-native training semantics.
 
@@ -135,7 +135,7 @@ So the real subset and the debug overfit path now use the same modality-native t
 The current training stack is now:
 
 1. Dataloader returns raw modalities: `model_rgb`, `model_depth`, `model_normal`, `edge_depth`.
-2. Training module builds `condition = concat(model_rgb, model_depth, model_normal)`.
+2. Training module builds `condition = concat(model_depth, model_normal)`.
 3. Training target is `edge_depth` with `3` hits.
 4. Model input is a noisy version of that same `edge_depth`, using the flow-matching-style linear interpolation with Gaussian noise.
 

@@ -1,5 +1,0 @@
-dataset_type: edge3d_modalities
-manifest_path: data/train_manifest.jsonl
-root_dir: .
-resize: [512, 1024]
-horizontal_flip_p: 0.0

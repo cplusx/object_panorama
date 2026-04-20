@@ -12,8 +12,8 @@ except ImportError:
     import pytorch_lightning as pl
 
 from evaluation import save_edge3d_validation_preview
-from inference import Edge3DX0BridgePipeline
 from models import RectangularConditionalJiTModel, create_rectangular_conditional_jit_model
+from pipeline import Edge3DX0BridgePipeline
 
 from .lr_scheduler_builder import build_lr_scheduler
 from .objectives import (
@@ -51,8 +51,11 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
         else:
             self.model = create_rectangular_conditional_jit_model(**effective_model_cfg)
 
+        load_jit = bool(self.pretrained_cfg.get("load_jit", False))
         checkpoint_path = self.pretrained_cfg.get("public_checkpoint_path")
-        if checkpoint_path:
+        if load_jit:
+            if not checkpoint_path:
+                raise ValueError("pretrained.load_jit=true requires pretrained.public_checkpoint_path")
             self.model.load_pretrained_jit_backbone_from_public_checkpoint(
                 checkpoint_path,
                 variant=str(self.pretrained_cfg.get("variant", "ema1")),
@@ -76,7 +79,11 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
         return loss_dict["loss_total"]
 
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> Any:
-        pipeline = Edge3DX0BridgePipeline(self.model, self.objective_cfg)
+        pipeline = Edge3DX0BridgePipeline(
+            self.model,
+            self.objective_cfg,
+            inference_dtype=str(self.validation_cfg.get("inference_dtype", "float16")),
+        )
         num_steps = int(self.validation_cfg.get("num_inference_steps", 20))
         output = pipeline.generate(batch, num_steps=num_steps, return_intermediates=False)
 

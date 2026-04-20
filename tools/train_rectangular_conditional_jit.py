@@ -37,8 +37,11 @@ def main() -> None:
     model = _build_model_from_config(effective_model_cfg)
 
     pretrained_cfg = dict(experiment_cfg.get("pretrained", {}))
+    load_jit = bool(pretrained_cfg.get("load_jit", False))
     checkpoint_path = pretrained_cfg.get("public_checkpoint_path")
-    if checkpoint_path:
+    if load_jit:
+        if not checkpoint_path:
+            raise ValueError("pretrained.load_jit=true requires pretrained.public_checkpoint_path")
         load_report = model.load_pretrained_jit_backbone_from_public_checkpoint(
             checkpoint_path,
             variant=str(pretrained_cfg.get("variant", "ema1")),
@@ -101,6 +104,13 @@ def main() -> None:
 def _prepare_model_cfg(model_cfg: dict) -> dict:
     prepared = copy.deepcopy(model_cfg)
     prepared.pop("name", None)
+    condition_channels_per_type = prepared.get("condition_channels_per_type")
+    if condition_channels_per_type is not None:
+        values = [int(value) for value in condition_channels_per_type]
+        if len(values) == 1:
+            prepared["condition_channels_per_type"] = [values[0], values[0], values[0]]
+        elif len(values) != 3:
+            raise ValueError("RectangularConditionalJiT config must provide either 1 or 3 condition channel entries")
     return prepared
 
 

@@ -10,9 +10,12 @@ from training.lightning_module import RectangularConditionalJiTLightningModule
 
 
 class _FakePipeline:
-    def __init__(self, model, objective_cfg) -> None:
+    last_inference_dtype = None
+
+    def __init__(self, model, objective_cfg, inference_dtype="float16") -> None:
         self.model = model
         self.objective_cfg = objective_cfg
+        type(self).last_inference_dtype = inference_dtype
 
     def generate(self, batch, num_steps=20, return_intermediates=False):
         del return_intermediates
@@ -66,7 +69,7 @@ class LightningValidationPipelineTests(unittest.TestCase):
             },
             freeze_cfg={},
             pretrained_cfg={},
-            validation_cfg={"num_inference_steps": 4, "save_preview_every_n_steps": 1},
+            validation_cfg={"num_inference_steps": 4, "inference_dtype": "float16", "save_preview_every_n_steps": 1},
         )
 
         batch = {
@@ -97,6 +100,7 @@ class LightningValidationPipelineTests(unittest.TestCase):
 
             logged_names = {name for name, _ in logged}
             self.assertEqual(logged_names, {"val/infer_loss_total", "val/infer_mse", "val/infer_l1"})
+            self.assertEqual(_FakePipeline.last_inference_dtype, "float16")
 
             preview_dir = Path(tmp_dir) / "validation_previews" / "step_000001"
             self.assertTrue((preview_dir / "preview.png").is_file())

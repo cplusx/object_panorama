@@ -236,23 +236,7 @@ def main() -> None:
     for local_index, uid in enumerate(uids, start=1):
         tensor_path = output_dir / f"{uid}.npz"
         if tensor_path.exists() and not args.overwrite:
-            existing = _load_existing_tensor_stats(tensor_path)
-            if existing is not None:
-                aggregate_hit1_entries += int(existing["hit1_entries"])
-                aggregate_total_entries += int(existing["total_entries_edge"])
-                aggregate_occupied_pixels += int(existing["occupied_pixels"])
-                aggregate_single_hit_pixels += int(existing["single_hit_pixels"])
-                aggregate_multi_hit_pixels += int(existing["multi_hit_pixels"])
-                results_by_index[local_index] = {
-                    "uid": uid,
-                    **existing,
-                    "elapsed_sec": 0.0,
-                    "source": "existing",
-                    "worker": None,
-                    "device": None,
-                }
-                reused_existing += 1
-                continue
+            continue
         tasks.append((local_index, uid))
 
     summary_path = output_dir / "export_summary.json"

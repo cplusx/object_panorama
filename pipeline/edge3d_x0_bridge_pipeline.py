@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from contextlib import nullcontext
 from typing import Any
 
 import torch
@@ -9,9 +10,10 @@ from training.objectives import build_edge3d_condition
 
 
 class Edge3DX0BridgePipeline:
-    def __init__(self, model, objective_cfg: dict):
+    def __init__(self, model, objective_cfg: dict[str, Any], inference_dtype: str = "float16"):
         self.model = model
         self.objective_cfg = copy.deepcopy(objective_cfg)
+        self.inference_dtype = _normalize_inference_dtype(inference_dtype)
 
     def _model_device(self) -> torch.device:
         return next(self.model.parameters()).device
@@ -63,11 +65,11 @@ class Edge3DX0BridgePipeline:
     @torch.no_grad()
     def generate(
         self,
-        batch: dict,
+        batch: dict[str, Any],
         num_steps: int = 20,
         noise: torch.Tensor | None = None,
         return_intermediates: bool = False,
-    ) -> dict:
+    ) -> dict[str, Any]:
         num_steps = int(num_steps)
         if num_steps <= 0:
             raise ValueError("num_steps must be positive")
@@ -92,36 +94,49 @@ class Edge3DX0BridgePipeline:
 
         was_training = bool(self.model.training)
         self.model.eval()
-        try:
-            for index in range(num_steps):
-                t = timesteps[index]
-                t_next = timesteps[index + 1]
-                timestep_batch = torch.full((x0_shape[0],), float(t.item()), device=device, dtype=dtype)
-                pred_x0 = self.model(
-                    sample=x_t,
-                    timestep=timestep_batch,
-                    condition=condition,
-                    condition_type_ids=condition_type_ids,
-                ).sample
-                x_t = (1.0 - t_next) * pred_x0 + t_next * z
+        use_autocast = device.type == "cuda" and self.inference_dtype == "float16"
+        autocast_context = torch.autocast(device_type="cuda", dtype=torch.float16) if use_autocast else nullcontext()
+        effective_dtype = "float16" if use_autocast else "float32"
 
-                if intermediates is not None:
-                    intermediates.append(
-                        {
-                            "timestep": float(t.item()),
-                            "pred_x0": pred_x0.detach().cpu().clone(),
-                            "x_t": x_t.detach().cpu().clone(),
-                        }
-                    )
+        try:
+            with autocast_context:
+                for index in range(num_steps):
+                    t = timesteps[index]
+                    t_next = timesteps[index + 1]
+                    timestep_batch = torch.full((x0_shape[0],), float(t.item()), device=device, dtype=dtype)
+                    pred_x0 = self.model(
+                        sample=x_t,
+                        timestep=timestep_batch,
+                        condition=condition,
+                        condition_type_ids=condition_type_ids,
+                    ).sample
+                    x_t = (1.0 - t_next) * pred_x0 + t_next * z
+
+                    if intermediates is not None:
+                        intermediates.append(
+                            {
+                                "timestep": float(t.item()),
+                                "pred_x0": pred_x0.detach().to(dtype=torch.float32).cpu().clone(),
+                                "x_t": x_t.detach().to(dtype=torch.float32).cpu().clone(),
+                            }
+                        )
         finally:
             self.model.train(was_training)
 
         output = {
-            "pred_edge_depth": pred_x0,
-            "initial_noise": z,
+            "pred_edge_depth": pred_x0.detach().to(dtype=torch.float32),
+            "initial_noise": z.detach().to(dtype=torch.float32),
             "num_steps": num_steps,
             "condition_channels": int(condition.shape[1]),
+            "effective_inference_dtype": effective_dtype,
         }
         if intermediates is not None:
             output["intermediates"] = intermediates
         return output
+
+
+def _normalize_inference_dtype(inference_dtype: str) -> str:
+    normalized = str(inference_dtype).strip().lower()
+    if normalized not in {"float16", "float32"}:
+        raise ValueError("inference_dtype must be 'float16' or 'float32'")
+    return normalized

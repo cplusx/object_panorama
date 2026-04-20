@@ -4,6 +4,8 @@ import torch
 
 from training import build_edge3d_condition
 from training.lightning_module import RectangularConditionalJiTLightningModule
+from tools.overfit_rectangular_conditional_jit import _prepare_model_cfg as prepare_overfit_model_cfg
+from tools.train_rectangular_conditional_jit import _prepare_model_cfg as prepare_train_model_cfg
 
 
 def _make_fake_batch() -> dict[str, torch.Tensor | list]:
@@ -72,6 +74,11 @@ class Edge3DConditionChannelTests(unittest.TestCase):
             "Condition channel mismatch: model expects 35, but objective built 20",
         ):
             module.training_step(_make_fake_batch(), batch_idx=0)
+
+    def test_simple_train_entrypoints_expand_single_condition_channel_slot(self) -> None:
+        model_cfg = {"name": "rectangular_conditional_jit", "condition_channels_per_type": [20]}
+        self.assertEqual(prepare_overfit_model_cfg(model_cfg)["condition_channels_per_type"], [20, 20, 20])
+        self.assertEqual(prepare_train_model_cfg(model_cfg)["condition_channels_per_type"], [20, 20, 20])
 
 
 if __name__ == "__main__":

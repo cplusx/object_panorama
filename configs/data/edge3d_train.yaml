@@ -1,0 +1,7 @@
+dataset_type: edge3d_modalities
+data_folders:
+  - /home/devdata/edge3d_data/equirectangular_data
+manifest_path: /home/devdata/edge3d_data/manifest_cache/edge3d_train.jsonl
+start_index: 0
+data_number: 10000
+decode_model_normal: true

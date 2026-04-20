@@ -98,13 +98,13 @@ Current real-data tensor semantics are documented in `docs/edge3d_training_data_
 Inspect one batch:
 
 ```bash
-python tools/inspect_manifest_batch.py configs/experiment/exp_b32_sparse_debug.yaml
+python tools/inspect_manifest_batch.py configs/experiment/edge3d_flow_overfit.yaml
 ```
 
 Run a tiny overfit smoke:
 
 ```bash
-python tools/overfit_rectangular_conditional_jit.py configs/experiment/exp_b32_sparse_debug.yaml --device cuda
+python tools/overfit_rectangular_conditional_jit.py configs/experiment/edge3d_flow_overfit.yaml --device cuda
 ```
 
 The following files remain debug-only and are not the formal training path:
@@ -153,7 +153,7 @@ Lightning single-GPU training:
 
 ```bash
 python tools/train_lightning_rectangular_conditional_jit.py \
-	configs/experiment/exp_b32_sparse_train.yaml \
+	configs/experiment/edge3d_flow_train.yaml \
 	--device cuda \
 	--precision 32-true \
 	--strategy auto
@@ -163,15 +163,15 @@ Lightning resume:
 
 ```bash
 python tools/train_lightning_rectangular_conditional_jit.py \
-	configs/experiment/exp_b32_sparse_train.yaml \
-	--resume runs/exp_b32_sparse_train/checkpoints/last.ckpt
+	configs/experiment/edge3d_flow_train.yaml \
+	--resume /home/devdata/edge3d_data/runs/edge3d_flow_train/checkpoints/last.ckpt
 ```
 
 Lightning + DeepSpeed:
 
 ```bash
 python tools/train_lightning_rectangular_conditional_jit.py \
-	configs/experiment/exp_b32_sparse_train.yaml \
+	configs/experiment/edge3d_flow_train.yaml \
 	--device cuda \
 	--precision 32-true \
 	--strategy deepspeed_stage_2

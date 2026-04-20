@@ -16,7 +16,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from edge3d_tensor_format import load_sample_modalities
-from inference import Edge3DX0BridgePipeline
+from pipeline import Edge3DX0BridgePipeline
 from training.lightning_module import RectangularConditionalJiTLightningModule
 from utils import load_yaml_config
 
@@ -24,7 +24,7 @@ from utils import load_yaml_config
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run single-sample Edge3D x0-bridge inference from a training config and checkpoint.")
     parser.add_argument("config", help="Experiment YAML config")
-    parser.add_argument("--checkpoint", required=True, help="Path to a Lightning or simple-training checkpoint")
+    parser.add_argument("--checkpoint", default=None, help="Path to a Lightning or simple-training checkpoint")
     parser.add_argument("--sample-path", required=True, help="Path to a single Edge3D equirectangular NPZ sample")
     parser.add_argument("--output-dir", required=True, help="Directory where inference outputs will be written")
     parser.add_argument("--num-steps", type=int, default=20)
@@ -54,16 +54,23 @@ def load_single_sample_batch(sample_path: str | Path) -> dict[str, torch.Tensor 
     }
 
 
-def load_module_from_checkpoint(config: dict, checkpoint_path: str | Path):
+def build_module(config: dict, checkpoint_path: str | Path | None):
+    pretrained_cfg = dict(config.get("pretrained", {}))
+    if checkpoint_path is not None:
+        pretrained_cfg["load_jit"] = False
+
     module = RectangularConditionalJiTLightningModule(
         model_cfg=dict(config["model"]),
         objective_cfg=dict(config["objective"]),
         loss_cfg=dict(config["loss"]),
         optim_cfg=dict(config["train"]),
         freeze_cfg=dict(config.get("freeze", {})),
-        pretrained_cfg=dict(config.get("pretrained", {})),
+        pretrained_cfg=pretrained_cfg,
         validation_cfg=dict(config.get("validation", {})),
     )
+
+    if checkpoint_path is None:
+        return module
 
     checkpoint = torch.load(Path(checkpoint_path), map_location="cpu")
     if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
@@ -115,13 +122,19 @@ def main() -> None:
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    module = load_module_from_checkpoint(config, args.checkpoint)
+    module = build_module(config, args.checkpoint)
+    if args.checkpoint is None and not bool(config.get("pretrained", {}).get("load_jit", False)):
+        print("warning: running inference with random weights because no checkpoint was provided and pretrained.load_jit=false", file=sys.stderr)
     device = torch.device(args.device)
     model = module.model.to(device=device, dtype=torch.float32)
     model.eval()
 
     batch = load_single_sample_batch(args.sample_path)
-    pipeline = Edge3DX0BridgePipeline(model, dict(config["objective"]))
+    pipeline = Edge3DX0BridgePipeline(
+        model,
+        dict(config["objective"]),
+        inference_dtype=str(config.get("validation", {}).get("inference_dtype", "float16")),
+    )
     output = pipeline.generate(batch, num_steps=args.num_steps, return_intermediates=False)
 
     pred_edge_depth = output["pred_edge_depth"].detach().cpu().to(dtype=torch.float32)
