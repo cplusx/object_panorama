@@ -102,7 +102,7 @@ def _resolve_device(requested_device: str) -> str:
 def _resolve_model_backend(requested_backend: str, device: str) -> str:
     if requested_backend != "auto":
         return requested_backend
-    return "gpu_rasterized_approx" if str(device).startswith("cuda") else "cpu_exact"
+    return "gpu_exact" if str(device).startswith("cuda") else "cpu_exact"
 
 
 def _manifest_row_from_metadata(metadata: dict[str, object]) -> dict[str, object]:
@@ -321,7 +321,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--edge-depth-merge-tol", type=float, default=None)
     parser.add_argument("--download-processes", type=int, default=4)
     parser.add_argument("--device", default="auto")
-    parser.add_argument("--model-backend", default="auto", choices=["auto", "cpu_exact", "gpu_rasterized_approx"])
+    parser.add_argument("--model-backend", default="auto", choices=["auto", "cpu_exact", "gpu_exact"])
     parser.add_argument("--shading", default="headlight", choices=["headlight", "none"])
     return parser.parse_args()
 
@@ -359,8 +359,8 @@ def main() -> None:
     resolved_device = _resolve_device(args.device)
     resolved_model_backend = _resolve_model_backend(args.model_backend, resolved_device)
 
-    if resolved_model_backend == "gpu_rasterized_approx" and not str(resolved_device).startswith("cuda"):
-        raise ValueError("gpu_rasterized_approx backend requires a CUDA device")
+    if resolved_model_backend == "gpu_exact" and not str(resolved_device).startswith("cuda"):
+        raise ValueError("gpu_exact backend requires a CUDA device")
 
     dataset = ObjaverseEdgeDataset(dataset_root)
     model_provider = ObjaverseModelProvider(dataset_root / "objaverse_cache", download_processes=args.download_processes)

@@ -2,36 +2,31 @@ import unittest
 
 import torch
 
-from training import build_paired_supervised_batch, build_x0_prediction_linear_bridge_batch
+from training import build_jit_flow_matching_batch
 
 
 class TrainingObjectiveTests(unittest.TestCase):
     def setUp(self) -> None:
         torch.manual_seed(0)
         self.batch = {
-            "input": torch.randn(2, 1, 8, 16),
-            "condition": torch.randn(2, 5, 8, 16),
-            "target": torch.randn(2, 1, 8, 16),
-            "condition_type_ids": torch.tensor([0, 2], dtype=torch.long),
+            "model_rgb": torch.randn(2, 6, 8, 16),
+            "model_depth": torch.randn(2, 2, 8, 16),
+            "model_normal": torch.randn(2, 6, 8, 16),
+            "edge_depth": torch.randn(2, 3, 8, 16),
         }
 
-    def test_build_paired_supervised_batch(self) -> None:
-        model_input = build_paired_supervised_batch(self.batch, fixed_timestep=0.5)
-        self.assertEqual(tuple(model_input.sample.shape), (2, 1, 8, 16))
-        self.assertEqual(tuple(model_input.condition.shape), (2, 5, 8, 16))
-        self.assertTrue(torch.allclose(model_input.timestep, torch.full((2,), 0.5)))
-        self.assertTrue(torch.equal(model_input.target, self.batch["target"]))
-
-    def test_build_x0_prediction_linear_bridge_batch(self) -> None:
-        model_input = build_x0_prediction_linear_bridge_batch(
+    def test_build_jit_flow_matching_batch(self) -> None:
+        model_input = build_jit_flow_matching_batch(
             self.batch,
             t_min=0.0,
             t_max=1.0,
-            concat_input_to_condition=True,
+            noise_scale=1.0,
+            condition_type_id=0,
         )
-        self.assertEqual(tuple(model_input.sample.shape), (2, 1, 8, 16))
-        self.assertEqual(tuple(model_input.condition.shape), (2, 6, 8, 16))
-        self.assertTrue(torch.equal(model_input.target, self.batch["target"]))
+        self.assertEqual(tuple(model_input.sample.shape), (2, 3, 8, 16))
+        self.assertEqual(tuple(model_input.condition.shape), (2, 14, 8, 16))
+        self.assertTrue(torch.equal(model_input.target, self.batch["edge_depth"]))
+        self.assertEqual(tuple(model_input.condition_type_ids.shape), (2,))
         self.assertFalse(torch.allclose(model_input.sample, model_input.target))
 
 

@@ -5,8 +5,7 @@ from typing import Any
 import torch
 
 from .objectives import (
-    build_paired_supervised_batch,
-    build_x0_prediction_linear_bridge_batch,
+    build_jit_flow_matching_batch,
     compute_prediction_losses,
 )
 from .types import TrainStepOutput
@@ -33,6 +32,8 @@ def run_train_step(
         loss_dict=loss_dict,
         pred=model_output.sample,
         target=model_input.target,
+        sample=model_input.sample,
+        condition=model_input.condition,
     )
 
 
@@ -41,22 +42,21 @@ def _move_batch_to_device(batch: dict[str, Any], device: str | torch.device) -> 
     return {
         "sample_ids": batch["sample_ids"],
         "meta": batch["meta"],
-        "input": batch["input"].to(resolved_device),
-        "condition": batch["condition"].to(resolved_device),
-        "target": batch["target"].to(resolved_device),
-        "condition_type_ids": batch["condition_type_ids"].to(resolved_device),
+        "model_rgb": batch["model_rgb"].to(resolved_device),
+        "model_depth": batch["model_depth"].to(resolved_device),
+        "model_normal": batch["model_normal"].to(resolved_device),
+        "edge_depth": batch["edge_depth"].to(resolved_device),
     }
 
 
 def _build_model_input_batch(batch: dict[str, Any], objective_cfg: dict[str, Any]):
-    objective_name = str(objective_cfg["name"]).lower()
-    if objective_name == "paired_supervised":
-        return build_paired_supervised_batch(batch, fixed_timestep=float(objective_cfg["fixed_timestep"]))
-    if objective_name == "x0_prediction_linear_bridge":
-        return build_x0_prediction_linear_bridge_batch(
-            batch,
-            t_min=float(objective_cfg["t_min"]),
-            t_max=float(objective_cfg["t_max"]),
-            concat_input_to_condition=bool(objective_cfg.get("concat_input_to_condition", False)),
-        )
-    raise ValueError(f"Unsupported objective '{objective_name}'")
+    objective_name = str(objective_cfg.get("name", "flow_matching")).lower()
+    if objective_name != "flow_matching":
+        raise ValueError(f"Unsupported objective '{objective_name}'")
+    return build_jit_flow_matching_batch(
+        batch,
+        t_min=float(objective_cfg.get("t_min", 0.0)),
+        t_max=float(objective_cfg.get("t_max", 1.0)),
+        noise_scale=float(objective_cfg.get("noise_scale", 1.0)),
+        condition_type_id=int(objective_cfg.get("condition_type_id", 0)),
+    )

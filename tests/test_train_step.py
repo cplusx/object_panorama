@@ -16,14 +16,14 @@ class TrainStepTests(unittest.TestCase):
         return RectangularConditionalJiTModel(
             input_size=(64, 128),
             patch_size=16,
-            image_in_channels=1,
-            image_out_channels=2,
+            image_in_channels=3,
+            image_out_channels=3,
             hidden_size=64,
             depth=4,
             num_heads=4,
             bottleneck_dim=16,
             condition_size=(64, 128),
-            condition_channels_per_type=(5, 6, 7),
+            condition_channels_per_type=(14, 14, 14),
             cond_base_channels=8,
             cond_bottleneck_dim=12,
             cond_tower_depth=2,
@@ -50,21 +50,23 @@ class TrainStepTests(unittest.TestCase):
 
         batch = {
             "sample_ids": ["a", "b"],
-            "input": torch.randn(2, 1, 64, 128),
-            "condition": torch.randn(2, 7, 64, 128),
-            "target": torch.randn(2, 2, 64, 128),
-            "condition_type_ids": torch.tensor([0, 2], dtype=torch.long),
+            "model_rgb": torch.randn(2, 6, 64, 128),
+            "model_depth": torch.randn(2, 2, 64, 128),
+            "model_normal": torch.randn(2, 6, 64, 128),
+            "edge_depth": torch.randn(2, 3, 64, 128),
             "meta": [{}, {}],
         }
         output = run_train_step(
             model,
             batch,
-            objective_cfg={"name": "paired_supervised", "fixed_timestep": 0.5},
+            objective_cfg={"name": "flow_matching", "t_min": 0.0, "t_max": 1.0, "noise_scale": 1.0},
             loss_cfg={"mse_weight": 1.0, "l1_weight": 0.0},
             device="cpu",
         )
         self.assertIn("loss_mse", output.loss_dict)
         self.assertIsNotNone(output.loss_total)
+        self.assertEqual(tuple(output.target.shape), (2, 3, 64, 128))
+        self.assertEqual(tuple(output.sample.shape), (2, 3, 64, 128))
 
         output.loss_total.backward()
         _assert_nonzero_grad(self, model.g_proj.mlp[2].weight.grad, "g_proj")

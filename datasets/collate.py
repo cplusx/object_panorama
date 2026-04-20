@@ -49,3 +49,25 @@ def conditional_jit_collate_fn(batch: list[dict], max_condition_channels: int) -
         "condition_type_ids": condition_type_ids,
         "meta": [item["meta"] for item in batch],
     }
+
+
+def edge3d_modality_collate_fn(batch: list[dict]) -> dict:
+    if not batch:
+        raise ValueError("Cannot collate an empty batch")
+
+    modality_keys = ("model_rgb", "model_depth", "model_normal", "edge_depth")
+    reference_shapes = {key: tuple(batch[0][key].shape) for key in modality_keys}
+
+    for item in batch:
+        for key in modality_keys:
+            if tuple(item[key].shape) != reference_shapes[key]:
+                raise ValueError(f"{key} shapes do not match within the batch")
+
+    return {
+        "sample_ids": [item["sample_id"] for item in batch],
+        "model_rgb": torch.stack([item["model_rgb"] for item in batch], dim=0),
+        "model_depth": torch.stack([item["model_depth"] for item in batch], dim=0),
+        "model_normal": torch.stack([item["model_normal"] for item in batch], dim=0),
+        "edge_depth": torch.stack([item["edge_depth"] for item in batch], dim=0),
+        "meta": [item["meta"] for item in batch],
+    }

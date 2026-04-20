@@ -3,8 +3,8 @@ preset_name: JiT-B/32
 input_size: [512, 1024]
 condition_size: [512, 1024]
 patch_size: 32
-image_in_channels: 1
-image_out_channels: 1
+image_in_channels: 3
+image_out_channels: 3
 condition_channels_per_type: [35, 35, 35]
 cond_base_channels: 16
 cond_tower_depth: 4

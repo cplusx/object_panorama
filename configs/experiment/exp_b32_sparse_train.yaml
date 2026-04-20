@@ -18,10 +18,11 @@ lightning:
   limit_val_batches: null
 
 objective:
-  name: x0_prediction_linear_bridge
+  name: flow_matching
   t_min: 0.0
   t_max: 1.0
-  concat_input_to_condition: true
+  noise_scale: 1.0
+  condition_type_id: 0
 
 loss:
   mse_weight: 1.0

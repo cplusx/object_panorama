@@ -91,6 +91,8 @@ The repository now includes a first-pass training stack for the rectangular cond
 - `tools/overfit_rectangular_conditional_jit.py`: tiny overfit smoke entrypoint.
 - `tools/train_lightning_rectangular_conditional_jit.py`: formal training entrypoint via PyTorch Lightning.
 
+Current real-data tensor semantics are documented in `docs/edge3d_training_data_logic.md`.
+
 ### Debug
 
 Inspect one batch:
@@ -118,26 +120,33 @@ Each JSONL row must contain:
 ```json
 {
 	"sample_id": "abc_0001",
-	"input_path": "relative/or/absolute/path/to/input.npy",
-	"condition_path": "relative/or/absolute/path/to/condition.npy",
-	"target_path": "relative/or/absolute/path/to/target.npy",
-	"has_model_rgb": 1,
-	"has_edge_depth": 0,
-	"has_model_normal": 1,
-	"condition_type_id": 0,
+	"tensor_path": "relative/or/absolute/path/to/sample.npz",
 	"meta": {
 		"anything": "optional"
 	}
 }
 ```
 
-Named condition flags are the primary representation for new manifests. `condition_type_id` is legacy compatibility only and, when present, must match the explicit flags.
+For the modality-native training path, the dataloader reads one `.npz` sample and returns:
 
-Legacy compatibility mapping:
+- `model_rgb`
+- `model_depth`
+- `model_normal`
+- `edge_depth`
 
-- `condition_type_id = 0` means `rgb_plus_normal` and maps to `has_model_rgb=1`, `has_edge_depth=0`, `has_model_normal=1`
-- `condition_type_id = 1` means `rgb_plus_edge_depth` and maps to `has_model_rgb=1`, `has_edge_depth=1`, `has_model_normal=0`
-- `condition_type_id = 2` means `normal_plus_edge_depth` and maps to `has_model_rgb=0`, `has_edge_depth=1`, `has_model_normal=1`
+The training module then builds the actual tensors used by the model:
+
+- `target = edge_depth` with `3` hits
+- `condition = concat(model_rgb, model_depth, model_normal)`
+- `sample = (1 - t) * target + t * noise`
+
+Current condition channel count is `35`:
+
+- `15` from `model_rgb`
+- `5` from `model_depth`
+- `15` from `model_normal`
+
+Legacy `condition_type_id` support still exists in the older triplet-manifest code path, but the current debug and real training configs now use modality manifests instead.
 
 ### Formal Training
 

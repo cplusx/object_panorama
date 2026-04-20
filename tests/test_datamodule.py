@@ -5,8 +5,8 @@ from pathlib import Path
 
 import numpy as np
 
+from edge3d_tensor_format import save_mixed_precision_sample
 from training.datamodule import RectangularConditionalJiTDataModule
-from utils.condition_metadata import LEGACY_CONDITION_TYPE_TO_FLAGS
 
 
 class DataModuleTests(unittest.TestCase):
@@ -17,20 +17,23 @@ class DataModuleTests(unittest.TestCase):
 
             records = []
             for index in range(4):
-                input_path = root / f"input_{index}.npy"
-                condition_path = root / f"condition_{index}.npy"
-                target_path = root / f"target_{index}.npy"
-                np.save(input_path, np.ones((1, 8, 16), dtype=np.float32))
-                np.save(condition_path, np.ones((5, 8, 16), dtype=np.float32))
-                np.save(target_path, np.zeros((1, 8, 16), dtype=np.float32))
+                tensor_path = root / f"sample_{index}.npz"
+                model_tensor = np.ones((14, 8, 16), dtype=np.float32) * (index + 1)
+                edge_tensor = np.zeros((3, 8, 16), dtype=np.float32)
+                edge_tensor[0] = index + 1
+                save_mixed_precision_sample(
+                    tensor_path,
+                    uid=f"sample_{index}",
+                    model_tensor=model_tensor,
+                    edge_tensor=edge_tensor,
+                    resolution=8,
+                    model_max_hits=2,
+                    edge_max_hits=3,
+                )
                 records.append(
                     {
                         "sample_id": f"sample_{index}",
-                        "input_path": input_path.name,
-                        "condition_path": condition_path.name,
-                        "target_path": target_path.name,
-                        **LEGACY_CONDITION_TYPE_TO_FLAGS[index % 3],
-                        "condition_type_id": index % 3,
+                        "tensor_path": tensor_path.name,
                         "meta": {"split": "train"},
                     }
                 )
@@ -40,21 +43,22 @@ class DataModuleTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            data_cfg = {"manifest_path": str(manifest_path), "root_dir": str(root)}
+            data_cfg = {"dataset_type": "edge3d_modalities", "manifest_path": str(manifest_path), "root_dir": str(root)}
             datamodule = RectangularConditionalJiTDataModule(
                 train_data_cfg=data_cfg,
                 val_data_cfg=data_cfg,
                 train_cfg={"batch_size": 2, "num_workers": 0},
-                max_condition_channels=5,
+                max_condition_channels=35,
             )
             datamodule.setup(stage="fit")
 
             train_batch = next(iter(datamodule.train_dataloader()))
             val_batch = next(iter(datamodule.val_dataloader()))
 
-            self.assertEqual(tuple(train_batch["input"].shape), (2, 1, 8, 16))
-            self.assertEqual(tuple(train_batch["condition"].shape), (2, 5, 8, 16))
-            self.assertEqual(tuple(val_batch["target"].shape), (2, 1, 8, 16))
+            self.assertEqual(tuple(train_batch["model_rgb"].shape), (2, 6, 8, 16))
+            self.assertEqual(tuple(train_batch["model_depth"].shape), (2, 2, 8, 16))
+            self.assertEqual(tuple(train_batch["model_normal"].shape), (2, 6, 8, 16))
+            self.assertEqual(tuple(val_batch["edge_depth"].shape), (2, 3, 8, 16))
 
 
 if __name__ == "__main__":

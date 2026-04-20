@@ -105,8 +105,14 @@ class SimpleTrainer:
 
             if visualize_every > 0 and step % visualize_every == 0:
                 visual_step_dir = self.visual_dir / f"step_{step:06d}"
-                save_debug_tensors(visual_step_dir, batch, step_output.pred, step_output.target)
-                save_preview_png(visual_step_dir, batch, step_output.pred, step_output.target)
+                save_debug_tensors(
+                    visual_step_dir,
+                    step_output.sample,
+                    step_output.condition,
+                    step_output.pred,
+                    step_output.target,
+                )
+                save_preview_png(visual_step_dir, step_output.sample, step_output.pred, step_output.target)
 
             if save_every > 0 and step % save_every == 0:
                 self._save_checkpoint(self.checkpoint_dir / "latest.pt", step=step, epoch=epoch)

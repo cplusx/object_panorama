@@ -33,7 +33,7 @@ def main() -> None:
     _set_seed(int(experiment_cfg["train"].get("seed", 0)))
     raw_model_cfg = dict(experiment_cfg["model"])
     objective_cfg = dict(experiment_cfg["objective"])
-    effective_model_cfg = _prepare_model_cfg(raw_model_cfg, objective_cfg=objective_cfg)
+    effective_model_cfg = _prepare_model_cfg(raw_model_cfg)
     model = _build_model_from_config(effective_model_cfg)
 
     pretrained_cfg = dict(experiment_cfg.get("pretrained", {}))
@@ -98,14 +98,9 @@ def main() -> None:
     trainer.fit()
 
 
-def _prepare_model_cfg(model_cfg: dict, objective_cfg: dict) -> dict:
+def _prepare_model_cfg(model_cfg: dict) -> dict:
     prepared = copy.deepcopy(model_cfg)
     prepared.pop("name", None)
-    if objective_cfg.get("name") == "x0_prediction_linear_bridge" and objective_cfg.get("concat_input_to_condition", False):
-        image_in_channels = int(prepared["image_in_channels"])
-        prepared["condition_channels_per_type"] = [
-            int(value) + image_in_channels for value in prepared["condition_channels_per_type"]
-        ]
     return prepared
 
 

@@ -12,8 +12,7 @@ from models import RectangularConditionalJiTModel, create_rectangular_conditiona
 
 from .lr_scheduler_builder import build_lr_scheduler
 from .objectives import (
-    build_paired_supervised_batch,
-    build_x0_prediction_linear_bridge_batch,
+    build_jit_flow_matching_batch,
     compute_prediction_losses,
 )
 from .optimizer_builder import build_optimizer, freeze_modules_from_config
@@ -65,12 +64,12 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
 
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> Any:
         loss_dict = self._shared_step(batch)
-        self._log_losses("train", loss_dict, batch_size=int(batch["input"].shape[0]))
+        self._log_losses("train", loss_dict, batch_size=int(batch["edge_depth"].shape[0]))
         return loss_dict["loss_total"]
 
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> Any:
         loss_dict = self._shared_step(batch)
-        self._log_losses("val", loss_dict, batch_size=int(batch["input"].shape[0]))
+        self._log_losses("val", loss_dict, batch_size=int(batch["edge_depth"].shape[0]))
         return loss_dict["loss_total"]
 
     def configure_optimizers(self):
@@ -153,25 +152,19 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
 
 
 def _build_model_input_batch(batch: dict[str, Any], objective_cfg: dict[str, Any]):
-    objective_name = str(objective_cfg["name"]).lower()
-    if objective_name == "paired_supervised":
-        return build_paired_supervised_batch(batch, fixed_timestep=float(objective_cfg["fixed_timestep"]))
-    if objective_name == "x0_prediction_linear_bridge":
-        return build_x0_prediction_linear_bridge_batch(
-            batch,
-            t_min=float(objective_cfg["t_min"]),
-            t_max=float(objective_cfg["t_max"]),
-            concat_input_to_condition=bool(objective_cfg.get("concat_input_to_condition", False)),
-        )
-    raise ValueError(f"Unsupported objective '{objective_name}'")
+    objective_name = str(objective_cfg.get("name", "flow_matching")).lower()
+    if objective_name != "flow_matching":
+        raise ValueError(f"Unsupported objective '{objective_name}'")
+    return build_jit_flow_matching_batch(
+        batch,
+        t_min=float(objective_cfg.get("t_min", 0.0)),
+        t_max=float(objective_cfg.get("t_max", 1.0)),
+        noise_scale=float(objective_cfg.get("noise_scale", 1.0)),
+        condition_type_id=int(objective_cfg.get("condition_type_id", 0)),
+    )
 
 
 def _prepare_model_cfg(model_cfg: dict[str, Any], objective_cfg: dict[str, Any]) -> dict[str, Any]:
     prepared = copy.deepcopy(model_cfg)
     prepared.pop("name", None)
-    if objective_cfg.get("name") == "x0_prediction_linear_bridge" and objective_cfg.get("concat_input_to_condition", False):
-        image_in_channels = int(prepared["image_in_channels"])
-        prepared["condition_channels_per_type"] = [
-            int(value) + image_in_channels for value in prepared["condition_channels_per_type"]
-        ]
     return prepared

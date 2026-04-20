@@ -18,8 +18,11 @@ lightning:
   limit_val_batches: null
 
 objective:
-  name: paired_supervised
-  fixed_timestep: 0.5
+  name: flow_matching
+  t_min: 0.0
+  t_max: 1.0
+  noise_scale: 1.0
+  condition_type_id: 0
 
 loss:
   mse_weight: 1.0

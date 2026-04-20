@@ -36,7 +36,7 @@ def main() -> None:
     _set_seed(int(experiment_cfg["train"].get("seed", 0)))
     effective_data_train_cfg = _prepare_overfit_data_cfg(experiment_cfg["data"]["train"])
     raw_model_cfg = dict(experiment_cfg["model"])
-    effective_model_cfg = _prepare_model_cfg(raw_model_cfg, objective_cfg={"name": "paired_supervised"})
+    effective_model_cfg = _prepare_model_cfg(raw_model_cfg)
     model = _build_model_from_config(effective_model_cfg)
 
     train_dataset = build_dataset_from_config(effective_data_train_cfg)
@@ -75,10 +75,7 @@ def main() -> None:
         max_condition_channels=max(int(value) for value in raw_model_cfg["condition_channels_per_type"]),
     )
 
-    objective_cfg = {
-        "name": "paired_supervised",
-        "fixed_timestep": float(experiment_cfg.get("objective", {}).get("fixed_timestep", 0.5)),
-    }
+    objective_cfg = dict(experiment_cfg["objective"])
     output_dir = Path(experiment_cfg["output_dir"]) / experiment_cfg["experiment_name"]
     effective_experiment_cfg = copy.deepcopy(experiment_cfg)
     effective_experiment_cfg["data"]["train"] = effective_data_train_cfg
@@ -99,14 +96,9 @@ def main() -> None:
     trainer.fit()
 
 
-def _prepare_model_cfg(model_cfg: dict, objective_cfg: dict) -> dict:
+def _prepare_model_cfg(model_cfg: dict) -> dict:
     prepared = copy.deepcopy(model_cfg)
     prepared.pop("name", None)
-    if objective_cfg.get("name") == "x0_prediction_linear_bridge" and objective_cfg.get("concat_input_to_condition", False):
-        image_in_channels = int(prepared["image_in_channels"])
-        prepared["condition_channels_per_type"] = [
-            int(value) + image_in_channels for value in prepared["condition_channels_per_type"]
-        ]
     return prepared
 
 

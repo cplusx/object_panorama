@@ -6,6 +6,17 @@ import torch
 import torch.nn.functional as F
 
 
+_TRANSFORM_TENSOR_KEYS = (
+    "input",
+    "condition",
+    "target",
+    "model_rgb",
+    "model_depth",
+    "model_normal",
+    "edge_depth",
+)
+
+
 class JointResize:
     def __init__(self, size: tuple[int, int], mode: str = "bilinear"):
         self.size = (int(size[0]), int(size[1]))
@@ -13,8 +24,9 @@ class JointResize:
 
     def __call__(self, sample: dict) -> dict:
         output = dict(sample)
-        for key in ["input", "condition", "target"]:
-            output[key] = _resize_tensor(output[key], size=self.size, mode=self.mode)
+        for key in _TRANSFORM_TENSOR_KEYS:
+            if key in output:
+                output[key] = _resize_tensor(output[key], size=self.size, mode=self.mode)
         return output
 
 
@@ -26,8 +38,9 @@ class JointRandomHorizontalFlip:
         if self.p <= 0.0 or torch.rand(1).item() >= self.p:
             return sample
         output = dict(sample)
-        for key in ["input", "condition", "target"]:
-            output[key] = torch.flip(output[key], dims=[-1])
+        for key in _TRANSFORM_TENSOR_KEYS:
+            if key in output:
+                output[key] = torch.flip(output[key], dims=[-1])
         return output
 
 

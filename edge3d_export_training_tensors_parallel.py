@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--edge-color", default="0,190,255")
     parser.add_argument("--edge-sample-factor", type=float, default=2.0)
     parser.add_argument("--edge-depth-merge-tol", type=float, default=None)
-    parser.add_argument("--model-backend", default="auto", choices=["auto", "cpu_exact", "gpu_rasterized_approx"])
+    parser.add_argument("--model-backend", default="gpu_exact", choices=["auto", "cpu_exact", "gpu_exact"])
     parser.add_argument("--shading", default="headlight", choices=["headlight", "none"])
     parser.add_argument("--download-processes", type=int, default=1)
     parser.add_argument("--download-timeout-sec", type=float, default=300.0)

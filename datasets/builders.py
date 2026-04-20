@@ -5,8 +5,9 @@ from typing import Any
 
 from torch.utils.data import DataLoader, Dataset
 
-from .collate import conditional_jit_collate_fn
+from .collate import conditional_jit_collate_fn, edge3d_modality_collate_fn
 from .manifest_dataset import ConditionalJiTManifestDataset
+from .modality_manifest_dataset import Edge3DModalityManifestDataset
 from .transforms import ComposeDictTransforms, JointRandomHorizontalFlip, JointResize
 
 
@@ -20,6 +21,14 @@ def build_dataset_from_config(cfg: dict[str, Any]) -> Dataset:
         transforms.append(JointRandomHorizontalFlip(horizontal_flip_p))
 
     dataset_transforms = ComposeDictTransforms(transforms) if transforms else None
+    dataset_type = str(cfg.get("dataset_type", "conditional_jit_manifest")).lower()
+    if dataset_type in {"edge3d_modalities", "edge3d_modality_manifest", "modality_manifest"}:
+        return Edge3DModalityManifestDataset(
+            manifest_path=cfg["manifest_path"],
+            root_dir=cfg.get("root_dir"),
+            transforms=dataset_transforms,
+            decode_model_normal=bool(cfg.get("decode_model_normal", True)),
+        )
     return ConditionalJiTManifestDataset(
         manifest_path=cfg["manifest_path"],
         root_dir=cfg.get("root_dir"),
@@ -34,6 +43,11 @@ def build_dataloader_from_config(cfg: dict[str, Any], dataset: Dataset, max_cond
     drop_last = bool(cfg.get("drop_last", False))
     pin_memory = bool(cfg.get("pin_memory", False))
 
+    collate_fn = edge3d_modality_collate_fn if isinstance(dataset, Edge3DModalityManifestDataset) else partial(
+        conditional_jit_collate_fn,
+        max_condition_channels=max_condition_channels,
+    )
+
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -41,5 +55,5 @@ def build_dataloader_from_config(cfg: dict[str, Any], dataset: Dataset, max_cond
         num_workers=num_workers,
         drop_last=drop_last,
         pin_memory=pin_memory,
-        collate_fn=partial(conditional_jit_collate_fn, max_condition_channels=max_condition_channels),
+        collate_fn=collate_fn,
     )

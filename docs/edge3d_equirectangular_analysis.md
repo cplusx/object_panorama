@@ -7,7 +7,8 @@ This note summarizes the current tensor export at resolution `512 x 1024` with `
 - Dataset slice: first `1000` UIDs
 - Successful exports: `998`
 - Failed exports: `2`
-- Export backend: `gpu_rasterized_approx`
+- Current exporter backend in repo: `gpu_exact`
+- The slice statistics below are retained as historical diagnostics; use the current `gpu_exact` backend for any new runs.
 - Output tensors:
   - `model_tensor`: `(35, 512, 1024)`
   - `edge_tensor`: `(5, 512, 1024)`

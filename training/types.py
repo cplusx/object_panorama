@@ -20,3 +20,5 @@ class TrainStepOutput:
     loss_dict: dict[str, torch.Tensor]
     pred: torch.Tensor | None
     target: torch.Tensor | None
+    sample: torch.Tensor | None = None
+    condition: torch.Tensor | None = None

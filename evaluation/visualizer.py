@@ -7,19 +7,25 @@ import torch
 from PIL import Image
 
 
-def save_debug_tensors(output_dir: str | Path, batch: dict, pred: torch.Tensor, target: torch.Tensor) -> None:
+def save_debug_tensors(
+    output_dir: str | Path,
+    sample: torch.Tensor,
+    condition: torch.Tensor,
+    pred: torch.Tensor,
+    target: torch.Tensor,
+) -> None:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    torch.save(batch["input"].detach().cpu(), output_path / "input.pt")
-    torch.save(batch["condition"].detach().cpu(), output_path / "condition.pt")
+    torch.save(sample.detach().cpu(), output_path / "sample.pt")
+    torch.save(condition.detach().cpu(), output_path / "condition.pt")
     torch.save(target.detach().cpu(), output_path / "target.pt")
     torch.save(pred.detach().cpu(), output_path / "pred.pt")
 
 
-def save_preview_png(output_dir: str | Path, batch: dict, pred: torch.Tensor, target: torch.Tensor) -> None:
+def save_preview_png(output_dir: str | Path, sample: torch.Tensor, pred: torch.Tensor, target: torch.Tensor) -> None:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    input_panel = _to_preview_panel(batch["input"])
+    input_panel = _to_preview_panel(sample)
     target_panel = _to_preview_panel(target)
     pred_panel = _to_preview_panel(pred)
     canvas = torch.cat([input_panel, target_panel, pred_panel], dim=-1)

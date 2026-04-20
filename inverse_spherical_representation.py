@@ -6,6 +6,11 @@ import torch
 import torch.nn.functional as F
 import trimesh
 
+try:
+    import warp as wp
+except ImportError:
+    wp = None
+
 
 @dataclass
 class InverseSphericalRepresentation:
@@ -259,6 +264,183 @@ def trace_mesh_multi_hit(
     return locations, radii, triangle_ids
 
 
+if wp is not None:
+
+    @wp.kernel
+    def _trace_mesh_multi_hit_warp_kernel(
+        mesh_id: wp.uint64,
+        ray_origins: wp.array(dtype=wp.vec3),
+        ray_directions: wp.array(dtype=wp.vec3),
+        ray_max_t: wp.array(dtype=wp.float32),
+        max_hits: int,
+        step_epsilon: float,
+        hit_positions: wp.array(dtype=wp.vec3),
+        hit_radii: wp.array(dtype=wp.float32),
+        hit_faces: wp.array(dtype=wp.int32),
+    ):
+        tid = wp.tid()
+        ray_count = ray_origins.shape[0]
+
+        current_start = ray_origins[tid]
+        ray_direction = ray_directions[tid]
+        remaining_total = ray_max_t[tid]
+        travelled = float(0.0)
+
+        for slot in range(max_hits):
+            remaining = remaining_total - travelled
+            if remaining <= 0.0:
+                break
+
+            query = wp.mesh_query_ray(mesh_id, current_start, ray_direction, remaining)
+            if not query.result:
+                break
+
+            out_idx = slot * ray_count + tid
+            hit_position = wp.mesh_eval_position(mesh_id, query.face, query.u, query.v)
+            hit_positions[out_idx] = hit_position
+            hit_radii[out_idx] = wp.length(hit_position)
+            hit_faces[out_idx] = query.face
+
+            step = query.t + step_epsilon
+            travelled = travelled + step
+            current_start = current_start + ray_direction * step
+
+
+def _normalize_cuda_device(device: str | torch.device) -> str:
+    device_str = str(device)
+    if device_str == "cuda":
+        return "cuda:0"
+    return device_str
+
+
+def _ensure_warp_gpu_exact_available(device: str | torch.device) -> str:
+    if wp is None:
+        raise ImportError("gpu_exact backend requires warp-lang to be installed")
+
+    resolved_device = _normalize_cuda_device(device)
+    if not resolved_device.startswith("cuda"):
+        raise ValueError("gpu_exact backend requires a CUDA device")
+
+    wp.init()
+    if not wp.is_cuda_available():
+        raise RuntimeError(
+            "warp CUDA backend is unavailable; check the CUDA toolkit/driver compatibility for warp-lang"
+        )
+    return resolved_device
+
+
+def _deduplicate_consecutive_hits(
+    hit_locations: np.ndarray,
+    radii: np.ndarray,
+    triangle_ids: np.ndarray,
+    location_epsilon: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    valid = triangle_ids >= 0
+    if hit_locations.shape[0] <= 1 or not valid.any():
+        return hit_locations, radii, triangle_ids
+
+    keep = valid.copy()
+    consecutive_deltas = np.linalg.norm(hit_locations[1:] - hit_locations[:-1], axis=2)
+    same_face = valid[1:] & valid[:-1] & (triangle_ids[1:] == triangle_ids[:-1])
+    same_location = valid[1:] & valid[:-1] & (consecutive_deltas <= location_epsilon)
+    keep[1:] &= ~(same_face | same_location)
+
+    if np.array_equal(keep, valid):
+        return hit_locations, radii, triangle_ids
+
+    compact_locations = np.full_like(hit_locations, np.nan)
+    compact_radii = np.full_like(radii, np.nan)
+    compact_triangle_ids = np.full_like(triangle_ids, -1)
+    write_slots = np.cumsum(keep, axis=0, dtype=np.int32) - 1
+
+    for slot in range(hit_locations.shape[0]):
+        ray_mask = keep[slot]
+        if not np.any(ray_mask):
+            continue
+        ray_ids = np.flatnonzero(ray_mask)
+        compact_slots = write_slots[slot, ray_ids]
+        compact_locations[compact_slots, ray_ids] = hit_locations[slot, ray_ids]
+        compact_radii[compact_slots, ray_ids] = radii[slot, ray_ids]
+        compact_triangle_ids[compact_slots, ray_ids] = triangle_ids[slot, ray_ids]
+
+    return compact_locations, compact_radii, compact_triangle_ids
+
+
+def trace_mesh_multi_hit_warp(
+    mesh: trimesh.Trimesh,
+    ray_origins: np.ndarray,
+    ray_directions: np.ndarray,
+    max_hits: int = 4,
+    stop_at_origin: bool = True,
+    depth_epsilon: float = 1e-6,
+    device: str | torch.device = "cuda:0",
+):
+    resolved_device = _ensure_warp_gpu_exact_available(device)
+
+    ray_origins = np.asarray(ray_origins, dtype=np.float32)
+    ray_directions = np.asarray(ray_directions, dtype=np.float32)
+    num_rays = int(ray_origins.shape[0])
+
+    ray_max_t = np.full((num_rays,), np.float32(1.0e10), dtype=np.float32)
+    if stop_at_origin:
+        ray_max_t = np.linalg.norm(ray_origins, axis=1).astype(np.float32) + np.float32(depth_epsilon)
+
+    vertices = np.asarray(mesh.vertices, dtype=np.float32)
+    faces = np.asarray(mesh.faces, dtype=np.int32).reshape(-1)
+    mesh_wp = wp.Mesh(
+        points=wp.array(vertices, dtype=wp.vec3, device=resolved_device),
+        indices=wp.array(faces, dtype=wp.int32, device=resolved_device),
+        bvh_constructor="lbvh",
+    )
+
+    ray_origins_wp = wp.array(ray_origins, dtype=wp.vec3, device=resolved_device)
+    ray_directions_wp = wp.array(ray_directions, dtype=wp.vec3, device=resolved_device)
+    ray_max_t_wp = wp.array(ray_max_t, dtype=wp.float32, device=resolved_device)
+
+    hit_positions_wp = wp.zeros(max_hits * num_rays, dtype=wp.vec3, device=resolved_device)
+    hit_radii_wp = wp.zeros(max_hits * num_rays, dtype=wp.float32, device=resolved_device)
+    hit_faces_wp = wp.array(
+        np.full((max_hits * num_rays,), -1, dtype=np.int32),
+        dtype=wp.int32,
+        device=resolved_device,
+    )
+
+    step_epsilon = float(max(depth_epsilon, 1e-6))
+    wp.launch(
+        kernel=_trace_mesh_multi_hit_warp_kernel,
+        dim=num_rays,
+        inputs=[
+            mesh_wp.id,
+            ray_origins_wp,
+            ray_directions_wp,
+            ray_max_t_wp,
+            int(max_hits),
+            step_epsilon,
+            hit_positions_wp,
+            hit_radii_wp,
+            hit_faces_wp,
+        ],
+        device=resolved_device,
+    )
+    wp.synchronize_device(resolved_device)
+
+    hit_locations = hit_positions_wp.numpy().reshape(max_hits, num_rays, 3).astype(np.float32)
+    radii = hit_radii_wp.numpy().reshape(max_hits, num_rays).astype(np.float32)
+    triangle_ids = hit_faces_wp.numpy().reshape(max_hits, num_rays).astype(np.int32)
+
+    hit_locations, radii, triangle_ids = _deduplicate_consecutive_hits(
+        hit_locations,
+        radii,
+        triangle_ids,
+        location_epsilon=float(max(depth_epsilon * 4.0, 1e-6)),
+    )
+
+    invalid = triangle_ids < 0
+    hit_locations[invalid] = np.nan
+    radii[invalid] = np.nan
+    return hit_locations, radii, triangle_ids
+
+
 def _barycentric_coordinates(points: torch.Tensor, triangle_vertices: torch.Tensor) -> torch.Tensor:
     v0, v1, v2 = triangle_vertices.unbind(1)
     v0v1 = v1 - v0
@@ -366,210 +548,55 @@ def sample_hit_attributes(
     return flat_output.view(layers, num_rays, 3).cpu(), flat_normal_output.view(layers, num_rays, 3).cpu()
 
 
-def sample_hit_attributes_from_barycentrics(
-    mesh: trimesh.Trimesh,
-    triangle_ids: np.ndarray,
-    bary_coords: np.ndarray,
-    ray_directions: np.ndarray,
-    device: str | torch.device = "cpu",
-    shading: str = "headlight",
-    face_order: tuple[int, int, int] = (0, 1, 2),
-) -> tuple[torch.Tensor, torch.Tensor]:
-    layers, num_rays = triangle_ids.shape
-    colors = torch.zeros((layers, num_rays, 3), dtype=torch.float32)
-    normal_maps = torch.zeros((layers, num_rays, 3), dtype=torch.float32)
-
-    valid_mask = triangle_ids >= 0
-    if not valid_mask.any():
-        return colors, normal_maps
-
-    flat_tri_ids = torch.from_numpy(triangle_ids[valid_mask]).to(device=device, dtype=torch.long)
-    flat_bary = torch.from_numpy(bary_coords[valid_mask]).to(device=device, dtype=torch.float32)
-    ray_ids = np.broadcast_to(np.arange(num_rays, dtype=np.int32)[None, :], (layers, num_rays))[valid_mask]
-    flat_ray_dirs = torch.from_numpy(ray_directions[ray_ids]).to(device=device, dtype=torch.float32)
-
-    vertices = torch.from_numpy(np.asarray(mesh.vertices).copy()).to(device=device, dtype=torch.float32)
-    faces_np = np.asarray(mesh.faces).copy()[:, list(face_order)]
-    faces = torch.from_numpy(faces_np).to(device=device, dtype=torch.long)
-    tri_vertices = vertices[faces[flat_tri_ids]]
-
-    vertex_normals = torch.from_numpy(np.asarray(mesh.vertex_normals).copy()).to(device=device, dtype=torch.float32)
-    tri_normals = vertex_normals[faces[flat_tri_ids]]
-    normals = (tri_normals * flat_bary[..., None]).sum(1)
-    normals = F.normalize(normals, dim=1)
-
-    material = getattr(mesh.visual, "material", None)
-    uv = getattr(mesh.visual, "uv", None)
-
-    if (
-        isinstance(mesh.visual, trimesh.visual.texture.TextureVisuals)
-        and material is not None
-        and getattr(material, "image", None) is not None
-        and uv is not None
-    ):
-        texture_image = mesh.visual.material.image.convert("RGB")
-        texture_np = np.asarray(texture_image)[..., :3].copy()
-        texture_map = (
-            torch.from_numpy(texture_np)
-            .permute(2, 0, 1)
-            .unsqueeze(0)
-            .to(device=device, dtype=torch.float32)
-            / 255.0
-        )
-        uv = torch.from_numpy(np.asarray(mesh.visual.uv).copy()).to(device=device, dtype=torch.float32)
-        tri_uv = uv[faces[flat_tri_ids]]
-        hit_uv = (tri_uv * flat_bary[..., None]).sum(1)
-        grid = torch.stack([hit_uv[:, 0] * 2 - 1, (1 - hit_uv[:, 1]) * 2 - 1], dim=1)
-        sampled = F.grid_sample(
-            texture_map,
-            grid.view(1, -1, 1, 2),
-            mode="bilinear",
-            align_corners=True,
-        )
-        albedo = sampled.view(3, -1).t()
-    elif hasattr(mesh.visual, "face_colors") and mesh.visual.face_colors is not None:
-        face_colors = torch.from_numpy(np.asarray(mesh.visual.face_colors).copy()[:, :3]).to(device=device, dtype=torch.float32) / 255.0
-        albedo = face_colors[flat_tri_ids]
-    elif hasattr(mesh.visual, "vertex_colors") and mesh.visual.vertex_colors is not None:
-        vertex_colors = torch.from_numpy(np.asarray(mesh.visual.vertex_colors).copy()[:, :3]).to(device=device, dtype=torch.float32) / 255.0
-        tri_colors = vertex_colors[faces[flat_tri_ids]]
-        albedo = (tri_colors * flat_bary[..., None]).sum(1)
-    elif material is not None and getattr(material, "main_color", None) is not None:
-        base_color = torch.tensor(np.asarray(material.main_color)[:3], device=device, dtype=torch.float32) / 255.0
-        albedo = base_color.unsqueeze(0).expand(flat_tri_ids.shape[0], -1)
-    else:
-        albedo = torch.ones((flat_tri_ids.shape[0], 3), device=device, dtype=torch.float32)
-
-    if shading == "none":
-        shaded = albedo
-    elif shading == "headlight":
-        view_dir = F.normalize(-flat_ray_dirs, dim=1)
-        cos_theta = (normals * view_dir).sum(1, keepdim=True).abs()
-        shaded = 0.1 * albedo + cos_theta * albedo
-    else:
-        raise ValueError(f"Unknown shading mode: {shading}")
-
-    flat_output = torch.zeros((layers * num_rays, 3), device=device, dtype=torch.float32)
-    flat_normal_output = torch.zeros((layers * num_rays, 3), device=device, dtype=torch.float32)
-    flat_indices = torch.from_numpy(np.flatnonzero(valid_mask.reshape(-1))).to(device=device, dtype=torch.long)
-    flat_output[flat_indices] = shaded
-    flat_normal_output[flat_indices] = normals
-    return flat_output.view(layers, num_rays, 3).cpu(), flat_normal_output.view(layers, num_rays, 3).cpu()
-
-
-def _mesh_to_inverse_spherical_representation_gpu_rasterized(
+def _mesh_to_inverse_spherical_representation_gpu_exact(
     mesh: trimesh.Trimesh,
     resolution: int,
     max_hits: int,
+    outer_radius: float,
+    batch_size: int,
     shading: str,
     device: str | torch.device,
+    stop_at_origin: bool,
 ) -> InverseSphericalRepresentation:
-    from pano_utils import cubemap_to_equirectangular, flip_cubemap_to_fit
-    from pytorch3d.renderer import FoVPerspectiveCameras, MeshRasterizer, RasterizationSettings, look_at_rotation
-    from pytorch3d.structures import Meshes
-
-    torch_device = torch.device(device)
-    vertices = torch.from_numpy(np.asarray(mesh.vertices).copy()).to(device=torch_device, dtype=torch.float32)
-    faces = torch.from_numpy(np.asarray(mesh.faces).copy()).to(device=torch_device, dtype=torch.long)
-    face_count = int(faces.shape[0])
-
-    inverted_vertices = vertices / (vertices.norm(dim=1, keepdim=True) ** 2).clamp_min(1e-8)
-    flipped_faces = faces[:, [0, 2, 1]]
-    inverted_mesh = Meshes(verts=[inverted_vertices], faces=[flipped_faces]).extend(6)
-
-    camera_dirs = torch.tensor(
-        [
-            [-1, 0, 0],
-            [1, 0, 0],
-            [0, -1, 0],
-            [0, 1, 0],
-            [0, 0, -1],
-            [0, 0, 1],
-        ],
-        device=torch_device,
-        dtype=torch.float32,
+    ray_origins, ray_directions, direction_map_np = build_inward_equirectangular_rays(
+        resolution,
+        outer_radius=outer_radius,
     )
-    up_vectors = torch.tensor(
-        [
-            [0, 1, 0],
-            [0, 1, 0],
-            [0, 0, 1],
-            [0, 0, 1],
-            [0, 1, 0],
-            [0, 1, 0],
-        ],
-        device=torch_device,
-        dtype=torch.float32,
-    )
-    rotations = look_at_rotation(camera_dirs, up=up_vectors)
-    translations = torch.zeros_like(camera_dirs)
-    cameras = FoVPerspectiveCameras(device=torch_device, R=rotations, T=translations, fov=90, znear=0.01, zfar=500)
-    raster_settings = RasterizationSettings(image_size=resolution, blur_radius=0.0, faces_per_pixel=max_hits, bin_size=0)
-    rasterizer = MeshRasterizer(cameras=cameras, raster_settings=raster_settings)
-    fragments = rasterizer(inverted_mesh, cameras=cameras)
-
-    pix_to_face = fragments.pix_to_face
-    valid = pix_to_face >= 0
-    safe_face_idx = pix_to_face.clamp_min(0)
-    bary_coords = fragments.bary_coords
-
-    packed_face_vertices = inverted_mesh.verts_packed()[inverted_mesh.faces_packed()]
-    hit_points_inv = (packed_face_vertices[safe_face_idx] * bary_coords.unsqueeze(-1)).sum(dim=-2)
-    inverse_radii_cube = hit_points_inv.norm(dim=-1)
-    triangle_ids_cube = torch.remainder(safe_face_idx, face_count)
-
-    width = 2 * resolution
-    radii = torch.full((max_hits, resolution, width), float("nan"), dtype=torch.float32)
-    valid_mask = torch.zeros((max_hits, resolution, width), dtype=torch.bool)
-    triangle_ids = np.full((max_hits, resolution, width), -1, dtype=np.int64)
-    bary_np = np.zeros((max_hits, resolution, width, 3), dtype=np.float32)
-
-    for layer in range(max_hits):
-        cube_valid = flip_cubemap_to_fit(valid[..., layer].unsqueeze(1).float())
-        pano_valid = cubemap_to_equirectangular(cube_valid, H=resolution, device=torch_device)[0] > 0.5
-        pano_valid_np = pano_valid.cpu().numpy()
-        valid_mask[layer] = pano_valid.cpu()
-
-        cube_inverse_radii = flip_cubemap_to_fit(inverse_radii_cube[..., layer].unsqueeze(1))
-        pano_inverse_radii = cubemap_to_equirectangular(cube_inverse_radii, H=resolution, device=torch_device)[0].cpu()
-        positive_mask = pano_valid_np & (pano_inverse_radii.numpy() > 1e-8)
-        if np.any(positive_mask):
-            radii[layer][torch.from_numpy(positive_mask)] = 1.0 / pano_inverse_radii[torch.from_numpy(positive_mask)]
-
-        cube_triangle_ids = flip_cubemap_to_fit(triangle_ids_cube[..., layer].unsqueeze(1).float())
-        pano_triangle_ids = cubemap_to_equirectangular(cube_triangle_ids, H=resolution, device=torch_device)[0].round().long().cpu().numpy()
-        pano_triangle_ids[~pano_valid_np] = -1
-        triangle_ids[layer] = pano_triangle_ids
-
-        cube_bary = flip_cubemap_to_fit(bary_coords[..., layer, :].permute(0, 3, 1, 2))
-        pano_bary = cubemap_to_equirectangular(cube_bary, H=resolution, device=torch_device).permute(1, 2, 0).cpu().numpy().astype(np.float32)
-        pano_bary[~pano_valid_np] = 0.0
-        bary_np[layer] = pano_bary
-
-    _, ray_directions, direction_map_np = build_inward_equirectangular_rays(resolution)
-    colors, normals = sample_hit_attributes_from_barycentrics(
+    hit_locations, radii_np, triangle_ids_np = trace_mesh_multi_hit_warp(
         mesh,
-        triangle_ids.reshape(max_hits, -1),
-        bary_np.reshape(max_hits, -1, 3),
+        ray_origins,
+        ray_directions,
+        max_hits=max_hits,
+        stop_at_origin=stop_at_origin,
+        device=device,
+    )
+    colors, normals = sample_hit_attributes(
+        mesh,
+        hit_locations,
+        triangle_ids_np,
         ray_directions,
         device=device,
         shading=shading,
-        face_order=(0, 2, 1),
     )
 
+    width = 2 * resolution
+    radii = torch.from_numpy(radii_np).view(max_hits, resolution, width)
+    valid_mask = torch.isfinite(radii) & (radii > 1e-8)
     inverse_radii = torch.zeros_like(radii)
-    finite_mask = torch.isfinite(radii) & (radii > 1e-8)
-    inverse_radii[finite_mask] = 1.0 / radii[finite_mask]
+    inverse_radii[valid_mask] = 1.0 / radii[valid_mask]
+    triangle_ids = torch.from_numpy(triangle_ids_np).view(max_hits, resolution, width)
+    colors = colors.view(max_hits, resolution, width, 3).permute(0, 3, 1, 2)
+    normals = normals.view(max_hits, resolution, width, 3).permute(0, 3, 1, 2)
     directions = torch.from_numpy(direction_map_np)
 
     return InverseSphericalRepresentation(
-        colors=colors.view(max_hits, resolution, width, 3).permute(0, 3, 1, 2),
+        colors=colors,
         radii=radii,
         inverse_radii=inverse_radii,
         valid_mask=valid_mask,
-        triangle_ids=torch.from_numpy(triangle_ids),
+        triangle_ids=triangle_ids,
         directions=directions,
-        normals=normals.view(max_hits, resolution, width, 3).permute(0, 3, 1, 2),
+        normals=normals,
     )
 
 
@@ -606,14 +633,17 @@ def mesh_to_inverse_spherical_representation(
     mesh = _load_trimesh(mesh_or_path)
     resolved_backend = backend
     if backend == "auto":
-        resolved_backend = "gpu_rasterized_approx" if str(device).startswith("cuda") else "cpu_exact"
-    if resolved_backend == "gpu_rasterized_approx":
-        return _mesh_to_inverse_spherical_representation_gpu_rasterized(
+        resolved_backend = "gpu_exact" if str(device).startswith("cuda") else "cpu_exact"
+    if resolved_backend == "gpu_exact":
+        return _mesh_to_inverse_spherical_representation_gpu_exact(
             mesh,
             resolution=resolution,
             max_hits=max_hits,
+            outer_radius=outer_radius,
+            batch_size=batch_size,
             shading=shading,
             device=device,
+            stop_at_origin=stop_at_origin,
         )
     if resolved_backend != "cpu_exact":
         raise ValueError(f"Unknown mesh representation backend: {backend}")
