@@ -11,7 +11,7 @@ try:
 except ImportError:
     import pytorch_lightning as pl
 
-from evaluation import save_edge3d_validation_preview
+from evaluation import save_debug_tensors, save_edge3d_validation_preview, save_preview_png
 from models import RectangularConditionalJiTModel, create_rectangular_conditional_jit_model
 from pipeline import Edge3DX0BridgePipeline
 
@@ -74,8 +74,11 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
         )
 
     def training_step(self, batch: dict[str, Any], batch_idx: int) -> Any:
-        loss_dict = self._shared_step(batch)
+        shared = self._shared_step(batch, return_debug_tensors=self._should_save_train_visualization())
+        loss_dict = shared["loss_dict"]
         self._log_losses("train", loss_dict, batch_size=int(batch["edge_depth"].shape[0]))
+        if shared.get("debug") is not None:
+            self._save_training_visualization(shared["debug"])
         return loss_dict["loss_total"]
 
     def validation_step(self, batch: dict[str, Any], batch_idx: int) -> Any:
@@ -100,7 +103,7 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
             "val/infer_l1": infer_loss_dict["loss_l1"],
         }
         self._log_metric_dict(metrics, batch_size=int(batch["edge_depth"].shape[0]), prog_bar_key="val/infer_loss_total")
-        self._maybe_save_validation_preview(batch_idx, batch, pred)
+        self._maybe_save_validation_preview(batch, pred)
         return metrics
 
     def configure_optimizers(self):
@@ -108,10 +111,13 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
         scheduler_cfg = copy.deepcopy(self.optim_cfg.get("lr_scheduler"))
         if isinstance(scheduler_cfg, dict):
             scheduler_name = str(scheduler_cfg.get("name", "")).lower()
-            if scheduler_name == "cosine_with_warmup" and "total_steps" not in scheduler_cfg and "max_steps" not in scheduler_cfg:
-                estimated_steps = self._estimate_total_steps()
-                if estimated_steps is not None:
-                    scheduler_cfg["total_steps"] = estimated_steps
+            if scheduler_name == "cosine_with_warmup":
+                total_steps = self._estimate_total_steps()
+                if total_steps is not None and "total_steps" not in scheduler_cfg and "max_steps" not in scheduler_cfg:
+                    scheduler_cfg["total_steps"] = total_steps
+                if "warmup_steps" not in scheduler_cfg and scheduler_cfg.get("warmup_epochs") is not None:
+                    effective_steps_per_epoch = int(self.optim_cfg.get("effective_steps_per_epoch", 0))
+                    scheduler_cfg["warmup_steps"] = int(scheduler_cfg["warmup_epochs"]) * effective_steps_per_epoch
             elif "max_steps" not in scheduler_cfg and self.optim_cfg.get("max_steps") is not None:
                 scheduler_cfg["max_steps"] = int(self.optim_cfg["max_steps"])
 
@@ -128,7 +134,7 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
             },
         }
 
-    def _shared_step(self, batch: dict[str, Any]) -> dict[str, Any]:
+    def _shared_step(self, batch: dict[str, Any], return_debug_tensors: bool = False) -> dict[str, Any]:
         model_input = _build_model_input_batch(batch, self.objective_cfg)
         _validate_condition_channels(self.model_cfg, model_input.condition)
         model_output = self.model(
@@ -137,7 +143,15 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
             condition=model_input.condition,
             condition_type_ids=model_input.condition_type_ids,
         )
-        return compute_prediction_losses(model_output.sample, model_input.target, self.loss_cfg)
+        output = {"loss_dict": compute_prediction_losses(model_output.sample, model_input.target, self.loss_cfg)}
+        if return_debug_tensors:
+            output["debug"] = {
+                "sample": model_input.sample.detach().cpu(),
+                "condition": model_input.condition.detach().cpu(),
+                "pred": model_output.sample.detach().cpu(),
+                "target": model_input.target.detach().cpu(),
+            }
+        return output
 
     def _log_losses(self, split: str, loss_dict: dict[str, Any], batch_size: int) -> None:
         if getattr(self, "_trainer", None) is None:
@@ -189,20 +203,47 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
                 sync_dist=sync_dist,
             )
 
-    def _maybe_save_validation_preview(self, batch_idx: int, batch: dict[str, Any], pred_edge_depth: torch.Tensor) -> None:
-        if batch_idx != 0 or getattr(self, "_trainer", None) is None:
+    def _maybe_save_validation_preview(self, batch: dict[str, Any], pred_edge_depth: torch.Tensor) -> None:
+        trainer = getattr(self, "_trainer", None)
+        if trainer is None:
             return
 
-        save_every = int(self.validation_cfg.get("save_preview_every_n_steps", 0))
+        save_every = int(self.validation_cfg.get("save_preview_every_n_epochs", 0))
         if save_every <= 0:
             return
 
-        step = int(getattr(self, "global_step", 0))
-        if step % save_every != 0:
+        epoch = int(getattr(trainer, "current_epoch", getattr(self, "current_epoch", 0))) + 1
+        if epoch % save_every != 0:
             return
 
-        output_dir = Path(self.trainer.default_root_dir) / "validation_previews" / f"step_{step:06d}"
-        save_edge3d_validation_preview(output_dir, batch, pred_edge_depth, max_items=2)
+        output_dir = Path(self.trainer.default_root_dir) / "validation_outputs" / f"epoch_{epoch:06d}"
+        save_edge3d_validation_preview(
+            output_dir,
+            batch,
+            pred_edge_depth,
+            sample_ids=batch.get("sample_ids"),
+            save_reconstruction=bool(self.validation_cfg.get("save_reconstruction", False)),
+        )
+
+    def _should_save_train_visualization(self) -> bool:
+        if getattr(self, "_trainer", None) is None or not getattr(self.trainer, "is_global_zero", True):
+            return False
+        interval = int(self.optim_cfg.get("visualize_every_n_steps", 0))
+        if interval <= 0:
+            return False
+        step = int(getattr(self, "global_step", 0)) + 1
+        return step % interval == 0
+
+    def _save_training_visualization(self, debug_tensors: dict[str, torch.Tensor]) -> None:
+        output_dir = Path(self.trainer.default_root_dir) / "visuals" / f"step_{int(self.global_step) + 1:06d}"
+        save_debug_tensors(
+            output_dir,
+            debug_tensors["sample"],
+            debug_tensors["condition"],
+            debug_tensors["pred"],
+            debug_tensors["target"],
+        )
+        save_preview_png(output_dir, debug_tensors["sample"], debug_tensors["pred"], debug_tensors["target"])
 
     def _estimate_total_steps(self) -> int | None:
         trainer = getattr(self, "_trainer", None)

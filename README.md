@@ -155,8 +155,7 @@ Lightning single-GPU training:
 python tools/train_lightning_rectangular_conditional_jit.py \
 	configs/experiment/edge3d_flow_train.yaml \
 	--device cuda \
-	--precision 32-true \
-	--strategy auto
+	--precision 32-true
 ```
 
 Lightning resume:

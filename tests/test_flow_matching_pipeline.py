@@ -29,6 +29,7 @@ class FlowMatchingPipelineTests(unittest.TestCase):
                 "use_model_depth": True,
                 "use_model_normal": True,
             },
+            inference_dtype="float16",
         )
 
         batch = {

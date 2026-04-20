@@ -122,6 +122,7 @@ def build_dataloader_from_config(cfg: dict[str, Any], dataset: Dataset, max_cond
     shuffle = bool(cfg.get("shuffle", False))
     drop_last = bool(cfg.get("drop_last", False))
     pin_memory = bool(cfg.get("pin_memory", False))
+    sampler = cfg.get("sampler")
 
     collate_fn = edge3d_modality_collate_fn if _is_edge3d_modality_dataset(dataset) else partial(
         conditional_jit_collate_fn,
@@ -131,8 +132,9 @@ def build_dataloader_from_config(cfg: dict[str, Any], dataset: Dataset, max_cond
     return DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=shuffle,
+        shuffle=shuffle if sampler is None else False,
         num_workers=num_workers,
+        sampler=sampler,
         drop_last=drop_last,
         pin_memory=pin_memory,
         collate_fn=collate_fn,

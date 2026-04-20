@@ -18,7 +18,13 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from edge3d_tensor_format import load_sample_modalities
-from inverse_spherical_representation import equirectangular_direction_map
+from reconstruction import (
+    EDGE_HIT_COLOR_PALETTE_RGB,
+    build_direction_map,
+    decode_edge_points,
+    export_overlap_pointcloud_glb,
+    export_point_cloud,
+)
 
 try:
     from edge3d_pipeline import (
@@ -40,14 +46,6 @@ except ModuleNotFoundError:
     load_alignment_from_report = None
     _HAS_REFERENCE_STACK = False
 
-
-EDGE_HIT_COLOR_PALETTE_RGB: tuple[tuple[int, int, int], ...] = (
-    (255, 72, 72),
-    (255, 196, 0),
-    (0, 208, 255),
-    (116, 92, 255),
-    (72, 232, 160),
-)
 REFERENCE_POINT_CLOUD_RGB = np.array([0.72, 0.72, 0.72], dtype=np.float32)
 
 
@@ -107,12 +105,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--metric-threshold", type=float, default=0.02, help="Distance threshold used for precision/recall/F-score metrics.")
     parser.add_argument("--skip-reference-metrics", action="store_true", help="Skip comparison against original mesh and raw edge points.")
     return parser.parse_args()
-
-
-def build_direction_map(height: int) -> np.ndarray:
-    return equirectangular_direction_map(int(height), device="cpu").cpu().numpy().astype(np.float32)
-
-
 def get_alignment(alignment_report: str | None):
     if alignment_report:
         return load_alignment_from_report(alignment_report)
@@ -157,71 +149,6 @@ def decode_model_points_and_colors(sample: dict[str, Any]) -> tuple[np.ndarray, 
     if not point_blocks:
         return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.float32)
     return np.concatenate(point_blocks, axis=0), np.concatenate(color_blocks, axis=0)
-
-
-def decode_edge_points(
-    sample: dict[str, Any],
-    color_palette_rgb: tuple[tuple[int, int, int], ...] = EDGE_HIT_COLOR_PALETTE_RGB,
-) -> tuple[np.ndarray, np.ndarray, list[int]]:
-    edge_depth = np.asarray(sample["edge_depth"], dtype=np.float32)
-    directions = build_direction_map(int(sample["resolution"]))
-
-    point_blocks: list[np.ndarray] = []
-    color_blocks: list[np.ndarray] = []
-    point_counts_per_hit: list[int] = []
-    for hit_index in range(edge_depth.shape[0]):
-        depth_hit = edge_depth[hit_index]
-        valid_mask = np.isfinite(depth_hit) & (depth_hit > 1e-8)
-        hit_count = int(valid_mask.sum())
-        point_counts_per_hit.append(hit_count)
-        if not np.any(valid_mask):
-            continue
-        points = directions[valid_mask] * depth_hit[valid_mask, None].astype(np.float32)
-        hit_color = np.asarray(color_palette_rgb[hit_index % len(color_palette_rgb)], dtype=np.float32) / 255.0
-        colors = np.repeat(hit_color[None, :], repeats=hit_count, axis=0)
-        point_blocks.append(points.astype(np.float32))
-        color_blocks.append(colors.astype(np.float32))
-
-    if not point_blocks:
-        return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.float32), point_counts_per_hit
-    return np.concatenate(point_blocks, axis=0), np.concatenate(color_blocks, axis=0), point_counts_per_hit
-
-
-def to_rgba_uint8(colors_rgb: np.ndarray) -> np.ndarray:
-    colors_rgb = np.clip(np.asarray(colors_rgb, dtype=np.float32), 0.0, 1.0)
-    alpha = np.ones((colors_rgb.shape[0], 1), dtype=np.float32)
-    rgba = np.concatenate([colors_rgb, alpha], axis=1)
-    return np.round(rgba * 255.0).astype(np.uint8)
-
-
-def export_point_cloud(points: np.ndarray, colors_rgb: np.ndarray, output_path: Path) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    cloud = trimesh.PointCloud(vertices=np.asarray(points, dtype=np.float32), colors=to_rgba_uint8(colors_rgb))
-    cloud.export(str(output_path))
-
-
-def export_overlap_pointcloud_glb(
-    model_points: np.ndarray,
-    model_colors: np.ndarray,
-    edge_points: np.ndarray,
-    edge_colors: np.ndarray,
-    output_path: Path,
-) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    scene = trimesh.Scene()
-    if len(model_points) > 0:
-        scene.add_geometry(
-            trimesh.PointCloud(vertices=np.asarray(model_points, dtype=np.float32), colors=to_rgba_uint8(model_colors)),
-            node_name="model_points",
-        )
-    if len(edge_points) > 0:
-        scene.add_geometry(
-            trimesh.PointCloud(vertices=np.asarray(edge_points, dtype=np.float32), colors=to_rgba_uint8(edge_colors)),
-            node_name="edge_points",
-        )
-    scene.export(str(output_path))
-
-
 def export_combined_point_cloud(
     point_sets: list[np.ndarray],
     color_sets: list[np.ndarray],
@@ -333,7 +260,11 @@ def reconstruct_equirectangular_npz_to_pointclouds(
     sample_dir.mkdir(parents=True, exist_ok=True)
 
     model_points, model_colors = decode_model_points_and_colors(sample)
-    edge_points, edge_colors, edge_point_counts_per_hit = decode_edge_points(sample)
+    edge_points, edge_colors, edge_point_counts_per_hit = decode_edge_points(
+        np.asarray(sample["edge_depth"], dtype=np.float32),
+        resolution=int(sample["resolution"]),
+        color_palette_rgb=EDGE_HIT_COLOR_PALETTE_RGB,
+    )
 
     overlap_pointcloud_glb_path = sample_dir / "overlap_pointcloud.glb"
     reference_model_pointcloud_path: Path | None = None

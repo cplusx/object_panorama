@@ -60,6 +60,7 @@ def main() -> None:
         train_data_cfg=dict(experiment_cfg["data"]["train"]),
         val_data_cfg=dict(experiment_cfg["data"]["val"]) if experiment_cfg["data"].get("val") is not None else None,
         train_cfg=train_cfg,
+        validation_cfg=dict(experiment_cfg.get("validation", {})),
         max_condition_channels=max(int(value) for value in raw_model_cfg["condition_channels_per_type"]),
     )
 
@@ -69,21 +70,16 @@ def main() -> None:
     callbacks = _build_callbacks(checkpoint_dir, enable_val_monitor=experiment_cfg["data"].get("val") is not None)
     precision = _resolve_precision(args.precision, lightning_cfg.get("precision", "32-true"))
 
-    trainer_kwargs = {
-        "default_root_dir": str(output_dir),
-        "accelerator": _resolve_accelerator(args.device, lightning_cfg.get("accelerator", "gpu")),
-        "devices": lightning_cfg.get("devices", 1),
-        "precision": precision,
-        "strategy": args.strategy or lightning_cfg.get("strategy", "auto"),
-        "log_every_n_steps": int(lightning_cfg.get("log_every_n_steps", 10)),
-        "max_steps": int(train_cfg["max_steps"]),
-        "val_check_interval": lightning_cfg.get("val_check_interval", 200),
-        "limit_train_batches": _resolve_limit(args.limit_train_batches, lightning_cfg.get("limit_train_batches")),
-        "limit_val_batches": _resolve_limit(args.limit_val_batches, lightning_cfg.get("limit_val_batches")),
-        "callbacks": callbacks,
-        "logger": logger,
-    }
-    trainer_kwargs = {key: value for key, value in trainer_kwargs.items() if value is not None}
+    trainer_kwargs = _build_trainer_kwargs(
+        args=args,
+        train_cfg=train_cfg,
+        lightning_cfg=lightning_cfg,
+        precision=precision,
+        default_root_dir=str(output_dir),
+        callbacks=callbacks,
+        logger=logger,
+        enable_validation=experiment_cfg["data"].get("val") is not None,
+    )
 
     trainer = pl.Trainer(**trainer_kwargs)
     trainer.fit(lightning_module, datamodule=datamodule, ckpt_path=args.resume)
@@ -91,7 +87,7 @@ def main() -> None:
 
 def _build_callbacks(checkpoint_dir: Path, enable_val_monitor: bool) -> list:
     callbacks = [
-        ModelCheckpoint(dirpath=str(checkpoint_dir), save_last=True),
+        ModelCheckpoint(dirpath=str(checkpoint_dir), filename="epoch_{epoch:06d}", every_n_epochs=1, save_top_k=-1, save_last=True),
         LearningRateMonitor(logging_interval="step"),
     ]
     if enable_val_monitor:
@@ -121,6 +117,77 @@ def _resolve_limit(cli_value: str | None, config_value):
     if parsed.is_integer():
         return int(parsed)
     return parsed
+
+
+def _build_trainer_kwargs(
+    *,
+    args: argparse.Namespace,
+    train_cfg: dict,
+    lightning_cfg: dict,
+    precision: str,
+    default_root_dir: str,
+    callbacks: list,
+    logger,
+    enable_validation: bool,
+) -> dict:
+    accelerator = _resolve_accelerator(args.device, lightning_cfg.get("accelerator", "gpu"))
+    devices = lightning_cfg.get("devices", 1)
+    num_devices = _count_devices(devices)
+    accumulate_grad_batches = _resolve_accumulate_grad_batches(
+        batch_size=int(train_cfg["batch_size"]),
+        effective_batch_size=int(train_cfg["effective_batch_size"]),
+        num_devices=num_devices,
+    )
+    default_limit_train_batches = _resolve_micro_batches_per_epoch(
+        effective_steps_per_epoch=int(train_cfg["effective_steps_per_epoch"]),
+        accumulate_grad_batches=accumulate_grad_batches,
+    )
+
+    trainer_kwargs = {
+        "default_root_dir": default_root_dir,
+        "accelerator": accelerator,
+        "devices": devices,
+        "precision": precision,
+        "strategy": args.strategy or lightning_cfg.get("strategy", "deepspeed_stage_2"),
+        "log_every_n_steps": int(lightning_cfg.get("log_every_n_steps", train_cfg.get("train_log_every_n_steps", 10))),
+        "max_epochs": int(train_cfg["max_epochs"]),
+        "accumulate_grad_batches": accumulate_grad_batches,
+        "limit_train_batches": _resolve_limit(args.limit_train_batches, lightning_cfg.get("limit_train_batches"))
+        or default_limit_train_batches,
+        "limit_val_batches": _resolve_limit(args.limit_val_batches, lightning_cfg.get("limit_val_batches")),
+        "check_val_every_n_epoch": int(lightning_cfg.get("check_val_every_n_epoch", 1)) if enable_validation else None,
+        "callbacks": callbacks,
+        "logger": logger,
+        "use_distributed_sampler": False,
+    }
+    return {key: value for key, value in trainer_kwargs.items() if value is not None}
+
+
+def _count_devices(devices) -> int:
+    if isinstance(devices, int):
+        return int(devices)
+    if isinstance(devices, str):
+        stripped = devices.strip()
+        if stripped.isdigit():
+            return int(stripped)
+        raise ValueError(f"Unsupported devices specification: {devices!r}")
+    if isinstance(devices, (list, tuple, set)):
+        return len(devices)
+    raise ValueError(f"Unsupported devices specification: {devices!r}")
+
+
+def _resolve_accumulate_grad_batches(batch_size: int, effective_batch_size: int, num_devices: int) -> int:
+    micro_batch = int(batch_size) * max(1, int(num_devices))
+    total_batch = int(effective_batch_size)
+    if total_batch % micro_batch != 0:
+        raise ValueError(
+            f"effective_batch_size={total_batch} must be divisible by batch_size*num_devices={micro_batch}"
+        )
+    return total_batch // micro_batch
+
+
+def _resolve_micro_batches_per_epoch(effective_steps_per_epoch: int, accumulate_grad_batches: int) -> int:
+    return int(effective_steps_per_epoch) * int(accumulate_grad_batches)
 
 
 def _resolve_precision(cli_precision: str | None, configured_precision: str | None) -> str:

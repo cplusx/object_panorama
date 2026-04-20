@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import torch
+import trimesh
 
 from training.lightning_module import RectangularConditionalJiTLightningModule
 
@@ -25,6 +26,7 @@ class _FakePipeline:
             "initial_noise": torch.zeros_like(pred),
             "num_steps": int(num_steps),
             "condition_channels": 20,
+            "effective_inference_dtype": "float16",
         }
 
 
@@ -64,12 +66,19 @@ class LightningValidationPipelineTests(unittest.TestCase):
                 "backbone_lr_mult": 0.1,
                 "weight_decay": 0.0,
                 "optimizer": "adamw",
-                "max_steps": 10,
+                "max_epochs": 1,
+                "effective_steps_per_epoch": 10,
+                "visualize_every_n_steps": 0,
                 "lr_scheduler": {"name": "constant"},
             },
             freeze_cfg={},
             pretrained_cfg={},
-            validation_cfg={"num_inference_steps": 4, "inference_dtype": "float16", "save_preview_every_n_steps": 1},
+            validation_cfg={
+                "num_inference_steps": 4,
+                "inference_dtype": "float16",
+                "save_preview_every_n_epochs": 1,
+                "save_reconstruction": True,
+            },
         )
 
         batch = {
@@ -90,7 +99,7 @@ class LightningValidationPipelineTests(unittest.TestCase):
         module.log = capture_log
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            module._trainer = SimpleNamespace(world_size=1, default_root_dir=tmp_dir, global_step=1)
+            module._trainer = SimpleNamespace(world_size=1, default_root_dir=tmp_dir, global_step=1, current_epoch=0)
             with mock.patch("training.lightning_module.Edge3DX0BridgePipeline", _FakePipeline):
                 output = module.validation_step(batch, batch_idx=0)
 
@@ -102,10 +111,21 @@ class LightningValidationPipelineTests(unittest.TestCase):
             self.assertEqual(logged_names, {"val/infer_loss_total", "val/infer_mse", "val/infer_l1"})
             self.assertEqual(_FakePipeline.last_inference_dtype, "float16")
 
-            preview_dir = Path(tmp_dir) / "validation_previews" / "step_000001"
-            self.assertTrue((preview_dir / "preview.png").is_file())
-            self.assertTrue((preview_dir / "pred_edge_depth.pt").is_file())
-            self.assertTrue((preview_dir / "target_edge_depth.pt").is_file())
+            sample_dir = Path(tmp_dir) / "validation_outputs" / "epoch_000001" / "sample-a"
+            self.assertTrue((sample_dir / "preview.png").is_file())
+            self.assertTrue((sample_dir / "pred_edge_depth.pt").is_file())
+            self.assertTrue((sample_dir / "target_edge_depth.pt").is_file())
+            self.assertTrue((sample_dir / "pred_edge_points.ply").is_file())
+            self.assertTrue((sample_dir / "target_edge_points.ply").is_file())
+            self.assertTrue((sample_dir / "overlap_pointcloud.glb").is_file())
+
+            pred_cloud = trimesh.load(sample_dir / "pred_edge_points.ply", force="mesh")
+            target_cloud = trimesh.load(sample_dir / "target_edge_points.ply", force="mesh")
+            overlap_scene = trimesh.load(sample_dir / "overlap_pointcloud.glb", force="scene")
+            self.assertEqual(len(getattr(pred_cloud, "faces", [])), 0)
+            self.assertEqual(len(getattr(target_cloud, "faces", [])), 0)
+            for geometry in overlap_scene.geometry.values():
+                self.assertEqual(len(getattr(geometry, "faces", [])), 0)
 
 
 if __name__ == "__main__":

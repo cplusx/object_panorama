@@ -1,5 +1,5 @@
 experiment_name: edge3d_flow_overfit
-output_dir: /home/devdata/edge3d_data/runs
+output_dir: ./runs
 
 model: configs/model/edge3d_jit_b32_depth_normal_sparse.yaml
 
@@ -15,14 +15,16 @@ lightning:
   precision: 32-true
   strategy: auto
   log_every_n_steps: 10
-  val_check_interval: 50
+  check_val_every_n_epoch: 1
   limit_train_batches: null
   limit_val_batches: null
 
 validation:
   num_inference_steps: 20
   inference_dtype: float16
-  save_preview_every_n_steps: 0
+  num_val_samples: 4
+  save_preview_every_n_epochs: 1
+  save_reconstruction: true
 
 objective:
   name: flow_matching
@@ -39,8 +41,8 @@ loss:
   l1_weight: 0.0
 
 pretrained:
-  load_jit: false
-  public_checkpoint_path: null
+  load_jit: true
+  public_checkpoint_path: /home/viplab/jiaxin/object_panorama/pretrained_weights/jit-b-32/checkpoint-last.pth
   variant: ema1
 
 freeze:

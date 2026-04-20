@@ -8,7 +8,7 @@ from torch.utils.data import Subset
 
 from edge3d_tensor_format import save_mixed_precision_sample
 from datasets import build_dataloader_from_config, build_dataset_from_config
-from training.datamodule import RectangularConditionalJiTDataModule
+from training.datamodule import RectangularConditionalJiTDataModule, _select_validation_indices
 
 
 class DataModuleTests(unittest.TestCase):
@@ -50,6 +50,7 @@ class DataModuleTests(unittest.TestCase):
                 train_data_cfg=data_cfg,
                 val_data_cfg=data_cfg,
                 train_cfg={"batch_size": 2, "num_workers": 0},
+                validation_cfg={"num_val_samples": 4},
                 max_condition_channels=20,
             )
             datamodule.setup(stage="fit")
@@ -110,6 +111,20 @@ class DataModuleTests(unittest.TestCase):
             self.assertIn("model_depth", batch)
             self.assertIn("model_normal", batch)
             self.assertIn("edge_depth", batch)
+
+    def test_validation_indices_are_globally_limited(self) -> None:
+        rank0 = _select_validation_indices(num_val_samples=4, rank=0, world_size=2)
+        rank1 = _select_validation_indices(num_val_samples=4, rank=1, world_size=2)
+        self.assertEqual(rank0, [0, 1])
+        self.assertEqual(rank1, [2, 3])
+        self.assertEqual(len(rank0) + len(rank1), 4)
+
+    def test_validation_indices_allow_uneven_last_rank(self) -> None:
+        rank0 = _select_validation_indices(num_val_samples=5, rank=0, world_size=2)
+        rank1 = _select_validation_indices(num_val_samples=5, rank=1, world_size=2)
+        self.assertEqual(rank0, [0, 1, 2])
+        self.assertEqual(rank1, [3, 4])
+        self.assertEqual(len(rank0) + len(rank1), 5)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import torch
 
 from models import RectangularConditionalJiTModel
 from training.lightning_module import RectangularConditionalJiTLightningModule
-from tools.train_lightning_rectangular_conditional_jit import _resolve_precision
+from tools.train_lightning_rectangular_conditional_jit import _resolve_accumulate_grad_batches, _resolve_precision
 
 
 class LightningModuleTests(unittest.TestCase):
@@ -46,7 +46,9 @@ class LightningModuleTests(unittest.TestCase):
             "backbone_lr_mult": 0.1,
             "weight_decay": 0.0,
             "optimizer": "adamw",
-            "max_steps": 10,
+            "max_epochs": 1,
+            "effective_steps_per_epoch": 10,
+            "visualize_every_n_steps": 0,
             "lr_scheduler": {"name": "constant"},
         }
 
@@ -128,6 +130,11 @@ class LightningModuleTests(unittest.TestCase):
             _resolve_precision("16-mixed", "32-true")
         with self.assertRaises(ValueError):
             _resolve_precision("bf16", "32-true")
+
+    def test_resolve_accumulate_grad_batches_uses_effective_batch_size(self) -> None:
+        self.assertEqual(_resolve_accumulate_grad_batches(batch_size=1, effective_batch_size=8, num_devices=2), 4)
+        with self.assertRaisesRegex(ValueError, "must be divisible"):
+            _resolve_accumulate_grad_batches(batch_size=2, effective_batch_size=7, num_devices=2)
 
 
 if __name__ == "__main__":
