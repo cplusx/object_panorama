@@ -44,7 +44,7 @@ class ConditionStemCollection(nn.Module):
             raise ValueError("condition_type_ids must be a 1D tensor with one entry per batch element")
 
         batch_size, channels, height, width = condition.shape
-        output = condition.new_zeros((batch_size, self.cond_base_channels, height, width))
+        output = None
 
         for type_id, stem in enumerate(self.stems):
             sample_mask = condition_type_ids == type_id
@@ -55,7 +55,14 @@ class ConditionStemCollection(nn.Module):
                 raise ValueError(
                     f"Condition tensor provides {channels} channels, but condition type {type_id} requires {required_channels}"
                 )
-            output[sample_mask] = stem(condition[sample_mask, :required_channels])
+            stem_output = stem(condition[sample_mask, :required_channels])
+            if output is None:
+                output = stem_output.new_zeros((batch_size, self.cond_base_channels, height, width))
+            elif output.dtype != stem_output.dtype:
+                output = output.to(dtype=stem_output.dtype)
+            output[sample_mask] = stem_output
+        if output is None:
+            output = condition.new_zeros((batch_size, self.cond_base_channels, height, width))
         return output
 
 

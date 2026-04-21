@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import struct
 from pathlib import Path
 from typing import Iterable
 
@@ -85,7 +87,12 @@ def decode_edge_points(
 
 def export_point_cloud(points: np.ndarray, colors_rgb: np.ndarray, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    cloud = trimesh.PointCloud(vertices=np.asarray(points, dtype=np.float32), colors=_to_rgba_uint8(colors_rgb))
+    point_array = _to_point_array(points)
+    color_array = _to_rgba_uint8(colors_rgb, num_points=len(point_array))
+    if len(point_array) == 0:
+        _write_empty_ply(output_path)
+        return
+    cloud = trimesh.PointCloud(vertices=point_array, colors=color_array)
     cloud.export(str(output_path))
 
 
@@ -112,12 +119,21 @@ def export_named_pointclouds_glb(
     output_path: Path,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    scene = trimesh.Scene()
+    prepared_pointclouds: list[tuple[str, np.ndarray, np.ndarray]] = []
     for node_name, points, colors_rgb in pointclouds:
-        if len(points) == 0:
+        point_array = _to_point_array(points)
+        if len(point_array) == 0:
             continue
+        prepared_pointclouds.append((node_name, point_array, _to_rgba_uint8(colors_rgb, num_points=len(point_array))))
+
+    if not prepared_pointclouds:
+        _write_empty_glb(output_path)
+        return
+
+    scene = trimesh.Scene()
+    for node_name, point_array, colors_rgba in prepared_pointclouds:
         scene.add_geometry(
-            trimesh.PointCloud(vertices=np.asarray(points, dtype=np.float32), colors=_to_rgba_uint8(colors_rgb)),
+            trimesh.PointCloud(vertices=point_array, colors=colors_rgba),
             node_name=node_name,
         )
     scene.export(str(output_path))
@@ -224,11 +240,73 @@ def save_model_target_pred_pointclouds(
     return outputs
 
 
-def _to_rgba_uint8(colors_rgb: np.ndarray) -> np.ndarray:
-    colors_rgb = np.clip(np.asarray(colors_rgb, dtype=np.float32), 0.0, 1.0)
-    alpha = np.ones((colors_rgb.shape[0], 1), dtype=np.float32)
-    rgba = np.concatenate([colors_rgb, alpha], axis=1)
-    return np.round(rgba * 255.0).astype(np.uint8)
+def _to_point_array(points: np.ndarray) -> np.ndarray:
+    point_array = np.asarray(points, dtype=np.float32)
+    if point_array.size == 0:
+        return np.zeros((0, 3), dtype=np.float32)
+    if point_array.ndim != 2 or point_array.shape[1] != 3:
+        raise ValueError(f"Expected point cloud with shape [N, 3], got {tuple(point_array.shape)}")
+    return point_array
+
+
+def _to_rgba_uint8(colors_rgb: np.ndarray, num_points: int) -> np.ndarray:
+    if num_points == 0:
+        return np.zeros((0, 4), dtype=np.uint8)
+
+    colors = np.asarray(colors_rgb)
+    if colors.ndim != 2 or colors.shape[0] != num_points or colors.shape[1] not in {3, 4}:
+        raise ValueError(
+            f"Expected colors with shape [{num_points}, 3] or [{num_points}, 4], got {tuple(colors.shape)}"
+        )
+
+    if np.issubdtype(colors.dtype, np.integer):
+        colors_uint8 = np.clip(colors.astype(np.int32), 0, 255).astype(np.uint8)
+        if colors_uint8.shape[1] == 3:
+            alpha = np.full((num_points, 1), fill_value=255, dtype=np.uint8)
+            return np.concatenate([colors_uint8, alpha], axis=1)
+        return colors_uint8
+
+    colors_float = np.clip(colors.astype(np.float32), 0.0, 1.0)
+    if colors_float.shape[1] == 3:
+        alpha = np.ones((num_points, 1), dtype=np.float32)
+        colors_float = np.concatenate([colors_float, alpha], axis=1)
+    return np.round(colors_float * 255.0).astype(np.uint8)
+
+
+def _write_empty_ply(output_path: Path) -> None:
+    output_path.write_text(
+        "\n".join(
+            [
+                "ply",
+                "format ascii 1.0",
+                "element vertex 0",
+                "property float x",
+                "property float y",
+                "property float z",
+                "property uchar red",
+                "property uchar green",
+                "property uchar blue",
+                "property uchar alpha",
+                "end_header",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_empty_glb(output_path: Path) -> None:
+    payload = {
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": []}],
+        "nodes": [],
+    }
+    json_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    json_bytes += b" " * ((4 - len(json_bytes) % 4) % 4)
+    chunk = struct.pack("<I4s", len(json_bytes), b"JSON") + json_bytes
+    header = struct.pack("<4sII", b"glTF", 2, 12 + len(chunk))
+    output_path.write_bytes(header + chunk)
 
 
 def _to_depth_layers_numpy(values: torch.Tensor | np.ndarray, expected_name: str) -> np.ndarray:

@@ -55,7 +55,7 @@ def main() -> None:
     train_cfg["batch_size"] = overfit_batch_size
     train_cfg["max_steps"] = int(args.max_steps)
     train_cfg["log_every"] = 20
-    train_cfg["save_every"] = 50
+    train_cfg["save_every"] = 200
     train_cfg["visualize_every"] = 50
     train_cfg["val_every"] = 0
 

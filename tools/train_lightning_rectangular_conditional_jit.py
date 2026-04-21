@@ -11,11 +11,11 @@ if str(REPO_ROOT) not in sys.path:
 try:
     import lightning.pytorch as pl
     from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
-    from lightning.pytorch.loggers import CSVLogger
+    from lightning.pytorch.loggers import CSVLogger, WandbLogger
 except ImportError:
     import pytorch_lightning as pl
     from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
-    from pytorch_lightning.loggers import CSVLogger
+    from pytorch_lightning.loggers import CSVLogger, WandbLogger
 
 from training.datamodule import RectangularConditionalJiTDataModule
 from training.lightning_module import RectangularConditionalJiTLightningModule
@@ -66,7 +66,7 @@ def main() -> None:
 
     output_dir = Path(experiment_cfg["output_dir"]) / experiment_cfg["experiment_name"]
     checkpoint_dir = output_dir / "checkpoints"
-    logger = CSVLogger(save_dir=str(output_dir), name="csv_logs")
+    logger = _build_logger(experiment_cfg, output_dir)
     callbacks = _build_callbacks(checkpoint_dir, enable_val_monitor=experiment_cfg["data"].get("val") is not None)
     precision = _resolve_precision(args.precision, lightning_cfg.get("precision", "32-true"))
 
@@ -101,6 +101,19 @@ def _build_callbacks(checkpoint_dir: Path, enable_val_monitor: bool) -> list:
             ),
         )
     return callbacks
+
+
+def _build_logger(experiment_cfg: dict, output_dir: Path):
+    wandb_cfg = dict(experiment_cfg.get("wandb", {}))
+    if bool(wandb_cfg.get("enabled", True)):
+        return WandbLogger(
+            project=wandb_cfg.get("project", "edge3d_flow"),
+            name=wandb_cfg.get("name", experiment_cfg["experiment_name"]),
+            save_dir=str(output_dir),
+            tags=wandb_cfg.get("tags", []),
+            log_model=bool(wandb_cfg.get("log_model", False)),
+        )
+    return CSVLogger(save_dir=str(output_dir), name="csv_logs")
 
 
 def _resolve_accelerator(device_arg: str | None, configured_accelerator: str) -> str:

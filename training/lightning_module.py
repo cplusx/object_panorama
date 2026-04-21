@@ -207,6 +207,8 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
         trainer = getattr(self, "_trainer", None)
         if trainer is None:
             return
+        if bool(getattr(trainer, "sanity_checking", False)):
+            return
 
         save_every = int(self.validation_cfg.get("save_preview_every_n_epochs", 0))
         if save_every <= 0:
@@ -217,13 +219,23 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
             return
 
         output_dir = Path(self.trainer.default_root_dir) / "validation_outputs" / f"epoch_{epoch:06d}"
-        save_edge3d_validation_preview(
+        saved_outputs = save_edge3d_validation_preview(
             output_dir,
             batch,
             pred_edge_depth,
             sample_ids=batch.get("sample_ids"),
             save_reconstruction=bool(self.validation_cfg.get("save_reconstruction", False)),
         )
+        for saved_output in saved_outputs:
+            sample_id = str(saved_output["sample_id"])
+            preview_path = Path(saved_output["preview_path"])
+            self._log_wandb_image(f"val/preview/{sample_id}", preview_path)
+            if bool(self.validation_cfg.get("save_reconstruction", False)):
+                self._log_wandb_artifact(
+                    name=f"validation_3d_epoch_{epoch}_{sample_id}",
+                    artifact_type="validation_3d",
+                    file_paths=self._validation_reconstruction_paths(Path(saved_output["sample_dir"])),
+                )
 
     def _should_save_train_visualization(self) -> bool:
         if getattr(self, "_trainer", None) is None or not getattr(self.trainer, "is_global_zero", True):
@@ -243,7 +255,54 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
             debug_tensors["pred"],
             debug_tensors["target"],
         )
-        save_preview_png(output_dir, debug_tensors["sample"], debug_tensors["pred"], debug_tensors["target"])
+        preview_path = save_preview_png(output_dir, debug_tensors["sample"], debug_tensors["pred"], debug_tensors["target"])
+        self._log_wandb_image("train/preview", preview_path)
+
+    def _log_wandb_image(self, key: str, image_path: Path) -> None:
+        experiment = self._wandb_experiment()
+        if experiment is None or not image_path.is_file() or not hasattr(experiment, "log"):
+            return
+        try:
+            import wandb
+
+            experiment.log({key: wandb.Image(str(image_path)), "global_step": int(self.global_step)})
+        except Exception as exc:
+            print(f"Failed to log wandb image {image_path}: {exc}")
+
+    def _log_wandb_artifact(self, name: str, artifact_type: str, file_paths: list[Path]) -> None:
+        experiment = self._wandb_experiment()
+        if experiment is None or not hasattr(experiment, "log_artifact"):
+            return
+        existing_paths = [path for path in file_paths if path.is_file()]
+        if not existing_paths:
+            return
+        try:
+            import wandb
+
+            artifact = wandb.Artifact(name=name, type=artifact_type)
+            for path in existing_paths:
+                artifact.add_file(str(path), name=path.name)
+            experiment.log_artifact(artifact)
+        except Exception as exc:
+            print(f"Failed to log wandb artifact {name}: {exc}")
+
+    def _wandb_experiment(self):
+        trainer = getattr(self, "_trainer", None)
+        if trainer is None or not getattr(trainer, "is_global_zero", True):
+            return None
+        logger = getattr(trainer, "logger", None)
+        if logger is None:
+            return None
+        return getattr(logger, "experiment", None)
+
+    def _validation_reconstruction_paths(self, sample_dir: Path) -> list[Path]:
+        return [
+            sample_dir / "model_points.ply",
+            sample_dir / "pred_edge_points.ply",
+            sample_dir / "target_edge_points.ply",
+            sample_dir / "overlap_pointcloud.glb",
+            sample_dir / "overlap_model_target_pred.glb",
+        ]
 
     def _estimate_total_steps(self) -> int | None:
         trainer = getattr(self, "_trainer", None)

@@ -19,6 +19,16 @@ lightning:
   limit_train_batches: null
   limit_val_batches: null
 
+wandb:
+  enabled: true
+  project: edge3d_flow
+  name: edge3d_flow_train
+  tags:
+    - edge3d
+    - jit
+    - flow_matching
+  log_model: false
+
 validation:
   num_inference_steps: 20
   inference_dtype: float16

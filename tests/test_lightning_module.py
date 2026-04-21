@@ -1,7 +1,12 @@
+import sys
+import tempfile
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import torch
+from PIL import Image
 
 from models import RectangularConditionalJiTModel
 from training.lightning_module import RectangularConditionalJiTLightningModule
@@ -135,6 +140,52 @@ class LightningModuleTests(unittest.TestCase):
         self.assertEqual(_resolve_accumulate_grad_batches(batch_size=1, effective_batch_size=8, num_devices=2), 4)
         with self.assertRaisesRegex(ValueError, "must be divisible"):
             _resolve_accumulate_grad_batches(batch_size=2, effective_batch_size=7, num_devices=2)
+
+    def test_training_visualization_logs_only_preview_to_wandb(self) -> None:
+        module = RectangularConditionalJiTLightningModule(
+            model_cfg=self._build_model_cfg(),
+            objective_cfg=self._build_objective_cfg(),
+            loss_cfg={"mse_weight": 1.0, "l1_weight": 0.0},
+            optim_cfg=self._build_optim_cfg(),
+            freeze_cfg={},
+            pretrained_cfg={},
+        )
+
+        logged_payloads = []
+
+        class FakeExperiment:
+            def log(self, payload):
+                logged_payloads.append(payload)
+
+        fake_logger = SimpleNamespace(experiment=FakeExperiment())
+
+        class FakeWandbImage:
+            def __init__(self, path: str) -> None:
+                self.path = path
+
+        fake_wandb = SimpleNamespace(Image=FakeWandbImage)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            module._trainer = SimpleNamespace(default_root_dir=tmp_dir, global_step=7, is_global_zero=True, logger=fake_logger)
+            debug_tensors = {
+                "sample": torch.randn(1, 3, 64, 128),
+                "condition": torch.randn(1, 20, 64, 128),
+                "pred": torch.randn(1, 3, 64, 128),
+                "target": torch.randn(1, 3, 64, 128),
+            }
+
+            with mock.patch.dict(sys.modules, {"wandb": fake_wandb}):
+                module._save_training_visualization(debug_tensors)
+
+            preview_path = Path(tmp_dir) / "visuals" / "step_000008" / "preview.png"
+            self.assertTrue(preview_path.is_file())
+            with Image.open(preview_path) as image:
+                self.assertEqual(image.size, (128 * 4, 64))
+
+        self.assertEqual(len(logged_payloads), 1)
+        self.assertEqual(logged_payloads[0]["global_step"], 7)
+        self.assertIn("train/preview", logged_payloads[0])
+        self.assertNotIn("condition", logged_payloads[0])
 
 
 if __name__ == "__main__":

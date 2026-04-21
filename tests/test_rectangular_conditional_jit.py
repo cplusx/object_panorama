@@ -5,6 +5,7 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
+from torch import nn
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -107,6 +108,27 @@ class RectangularConditionalJiTTests(unittest.TestCase):
         _assert_nonzero_grad(self, condition.grad, "condition input")
         for index, stem in enumerate(stems.stems):
             _assert_nonzero_grad(self, stem.net[0].weight.grad, f"condition stem {index} weight")
+
+    def test_condition_stem_collection_matches_stem_output_dtype(self) -> None:
+        class _HalfStem(nn.Module):
+            def __init__(self, in_channels: int, out_channels: int):
+                super().__init__()
+                self.in_channels = int(in_channels)
+                self.out_channels = int(out_channels)
+
+            def forward(self, condition: torch.Tensor) -> torch.Tensor:
+                batch_size, _, height, width = condition.shape
+                return torch.ones((batch_size, self.out_channels, height, width), device=condition.device, dtype=torch.float16)
+
+        stems = ConditionStemCollection((2, 3, 4), cond_base_channels=8)
+        stems.stems = nn.ModuleList([_HalfStem(2, 8), _HalfStem(3, 8), _HalfStem(4, 8)])
+        condition = torch.randn(3, 4, 16, 32, dtype=torch.float32)
+        condition_type_ids = torch.tensor([0, 1, 2], dtype=torch.long)
+
+        out = stems(condition, condition_type_ids)
+
+        self.assertEqual(out.dtype, torch.float16)
+        self.assertEqual(tuple(out.shape), (3, 8, 16, 32))
 
     def test_condition_tower_shapes_prefix_rope_and_grad(self) -> None:
         tower = ConditionTower(

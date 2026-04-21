@@ -31,7 +31,7 @@ def save_edge3d_validation_preview(
     sample_ids=None,
     max_items=None,
     save_reconstruction=False,
-):
+) -> list[dict[str, object]]:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -42,6 +42,7 @@ def save_edge3d_validation_preview(
     if not resolved_sample_ids:
         resolved_sample_ids = [f"sample_{index:06d}" for index in range(int(pred_edge_depth.shape[0]))]
     limit = len(resolved_sample_ids) if max_items is None else min(int(max_items), len(resolved_sample_ids))
+    saved_outputs: list[dict[str, object]] = []
 
     for index in range(limit):
         sample_dir = output_path / str(resolved_sample_ids[index])
@@ -67,13 +68,26 @@ def save_edge3d_validation_preview(
             axis.imshow(image, cmap="magma")
             axis.set_title(title)
             axis.axis("off")
-        figure.savefig(sample_dir / "preview.png", dpi=160)
+        preview_path = sample_dir / "preview.png"
+        figure.savefig(preview_path, dpi=160)
         plt.close(figure)
 
+        reconstruction_outputs: dict[str, str] = {}
         if save_reconstruction:
-            save_model_target_pred_pointclouds(
+            reconstruction_outputs = save_model_target_pred_pointclouds(
                 sample_dir,
                 model_depth=sample_model,
                 pred_edge_depth=sample_pred,
                 target_edge_depth=sample_target,
             )
+
+        saved_outputs.append(
+            {
+                "sample_id": str(resolved_sample_ids[index]),
+                "sample_dir": sample_dir,
+                "preview_path": preview_path,
+                "reconstruction_outputs": reconstruction_outputs,
+            }
+        )
+
+    return saved_outputs
