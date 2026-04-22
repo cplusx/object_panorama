@@ -13,14 +13,16 @@ from training.lightning_module import RectangularConditionalJiTLightningModule
 
 class _FakePipeline:
     last_inference_dtype = None
+    last_cfg_scale = None
 
     def __init__(self, model, objective_cfg, inference_dtype="float16") -> None:
         self.model = model
         self.objective_cfg = objective_cfg
         type(self).last_inference_dtype = inference_dtype
 
-    def generate(self, batch, num_steps=20, return_intermediates=False):
+    def generate(self, batch, num_steps=20, return_intermediates=False, cfg_scale=1.0):
         del return_intermediates
+        type(self).last_cfg_scale = float(cfg_scale)
         pred = torch.full_like(batch["edge_depth"], 0.5)
         return {
             "pred_edge_depth": pred,
@@ -28,6 +30,8 @@ class _FakePipeline:
             "num_steps": int(num_steps),
             "condition_channels": 20,
             "effective_inference_dtype": "float16",
+            "cfg_scale": float(cfg_scale),
+            "uses_cfg": bool(cfg_scale > 1.0),
         }
 
 
@@ -77,6 +81,7 @@ class LightningValidationPipelineTests(unittest.TestCase):
             validation_cfg={
                 "num_inference_steps": 4,
                 "inference_dtype": "float16",
+                "cfg_scale": 1.5,
                 "save_preview_every_n_epochs": 1,
                 "save_reconstruction": True,
             },
@@ -149,6 +154,7 @@ class LightningValidationPipelineTests(unittest.TestCase):
             validation_cfg={
                 "num_inference_steps": 4,
                 "inference_dtype": "float16",
+                "cfg_scale": 1.5,
                 "save_preview_every_n_epochs": 1,
                 "save_reconstruction": True,
             },
@@ -217,6 +223,7 @@ class LightningValidationPipelineTests(unittest.TestCase):
             logged_names = {name for name, _ in logged}
             self.assertEqual(logged_names, {"val/infer_loss_total", "val/infer_mse", "val/infer_l1"})
             self.assertEqual(_FakePipeline.last_inference_dtype, "float16")
+            self.assertEqual(_FakePipeline.last_cfg_scale, 1.5)
 
             sample_dir = Path(tmp_dir) / "validation_outputs" / "epoch_000001" / "sample-a"
             self.assertTrue((sample_dir / "preview.png").is_file())

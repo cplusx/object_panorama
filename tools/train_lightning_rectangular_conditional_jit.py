@@ -32,7 +32,14 @@ def parse_args() -> argparse.Namespace:
         choices=["auto", "ddp", "deepspeed_stage_2", "deepspeed_stage_2_offload"],
         default=None,
     )
-    parser.add_argument("--resume", default=None)
+    parser.add_argument(
+        "-r",
+        "--resume",
+        nargs="?",
+        const="auto",
+        default=None,
+        help="Resume from checkpoint. Use -r or --resume with no value to resume from <output_dir>/<experiment_name>/checkpoints/last.ckpt; pass a path to resume from that checkpoint.",
+    )
     parser.add_argument("--limit-train-batches", default=None)
     parser.add_argument("--limit-val-batches", default=None)
     return parser.parse_args()
@@ -82,24 +89,22 @@ def main() -> None:
     )
 
     trainer = pl.Trainer(**trainer_kwargs)
-    trainer.fit(lightning_module, datamodule=datamodule, ckpt_path=args.resume)
+    ckpt_path = _resolve_resume_checkpoint(args.resume, output_dir)
+    trainer.fit(lightning_module, datamodule=datamodule, ckpt_path=ckpt_path)
 
 
 def _build_callbacks(checkpoint_dir: Path, enable_val_monitor: bool) -> list:
+    del enable_val_monitor
     callbacks = [
-        ModelCheckpoint(dirpath=str(checkpoint_dir), filename="epoch_{epoch:06d}", every_n_epochs=1, save_top_k=-1, save_last=True),
+        ModelCheckpoint(
+            dirpath=str(checkpoint_dir),
+            filename="epoch_{epoch:06d}",
+            every_n_epochs=1,
+            save_top_k=1,
+            save_last=True,
+        ),
         LearningRateMonitor(logging_interval="step"),
     ]
-    if enable_val_monitor:
-        callbacks.insert(
-            0,
-            ModelCheckpoint(
-                dirpath=str(checkpoint_dir),
-                save_top_k=1,
-                monitor="val/infer_loss_total",
-                mode="min",
-            ),
-        )
     return callbacks
 
 
@@ -130,6 +135,21 @@ def _resolve_limit(cli_value: str | None, config_value):
     if parsed.is_integer():
         return int(parsed)
     return parsed
+
+
+def _resolve_resume_checkpoint(resume_arg, output_dir: Path):
+    if resume_arg is None:
+        return None
+    if str(resume_arg).lower() == "auto":
+        last_ckpt = (output_dir / "checkpoints" / "last.ckpt").expanduser().resolve()
+        if not last_ckpt.exists():
+            raise FileNotFoundError(f"Requested auto resume, but last checkpoint does not exist: {last_ckpt}")
+        return str(last_ckpt)
+
+    resume_path = Path(resume_arg).expanduser().resolve()
+    if not resume_path.exists():
+        raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+    return str(resume_path)
 
 
 def _build_trainer_kwargs(

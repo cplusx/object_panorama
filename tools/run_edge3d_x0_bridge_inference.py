@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-path", required=True, help="Path to a single Edge3D equirectangular NPZ sample")
     parser.add_argument("--output-dir", required=True, help="Directory where inference outputs will be written")
     parser.add_argument("--num-steps", type=int, default=20)
+    parser.add_argument("--cfg-scale", type=float, default=None)
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
     return parser.parse_args()
 
@@ -135,7 +136,8 @@ def main() -> None:
         dict(config["objective"]),
         inference_dtype=str(config.get("validation", {}).get("inference_dtype", "float16")),
     )
-    output = pipeline.generate(batch, num_steps=args.num_steps, return_intermediates=False)
+    cfg_scale = float(args.cfg_scale) if args.cfg_scale is not None else float(config.get("validation", {}).get("cfg_scale", 1.0))
+    output = pipeline.generate(batch, num_steps=args.num_steps, return_intermediates=False, cfg_scale=cfg_scale)
 
     pred_edge_depth = output["pred_edge_depth"].detach().cpu().to(dtype=torch.float32)
     target_edge_depth = torch.nan_to_num(batch["edge_depth"], nan=0.0, posinf=0.0, neginf=0.0).detach().cpu().to(dtype=torch.float32)
@@ -149,6 +151,7 @@ def main() -> None:
     print(f"inference output: {output_dir}")
     print(f"condition channels: {output['condition_channels']}")
     print(f"num steps: {output['num_steps']}")
+    print(f"cfg scale: {output['cfg_scale']}")
 
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ wandb:
 validation:
   num_inference_steps: 20
   inference_dtype: float16
+  cfg_scale: 1.5
   num_val_samples: 4
   save_preview_every_n_epochs: 1
   save_reconstruction: true
@@ -34,6 +35,7 @@ objective:
   t_min: 0.0
   t_max: 1.0
   noise_scale: 1.0
+  condition_dropout_p: 0.1
   condition_type_id: 0
   use_model_rgb: false
   use_model_depth: true

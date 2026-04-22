@@ -78,15 +78,27 @@ class RectangularConditionalJiTDataModule(pl.LightningDataModule):
         )
 
     def _build_train_sampler(self):
-        rank, world_size = _resolve_rank_and_world_size(getattr(self, "trainer", None))
-        if world_size <= 1:
-            return None
-        return torch.utils.data.distributed.DistributedSampler(
+        rank, world_size = _resolve_rank_and_world_size(_get_attached_trainer(self))
+        micro_batches_per_epoch = _resolve_train_micro_batches_per_epoch(self.train_cfg, world_size)
+        if micro_batches_per_epoch is None:
+            if world_size <= 1:
+                return None
+            return torch.utils.data.distributed.DistributedSampler(
+                self.train_dataset,
+                num_replicas=world_size,
+                rank=rank,
+                shuffle=True,
+                drop_last=bool(self.train_cfg.get("drop_last", False)),
+            )
+
+        batch_size = int(self.train_cfg.get("batch_size", 1))
+        return _RepeatingDistributedSampler(
             self.train_dataset,
             num_replicas=world_size,
             rank=rank,
             shuffle=True,
-            drop_last=bool(self.train_cfg.get("drop_last", False)),
+            seed=int(self.train_cfg.get("seed", 0)),
+            num_samples=batch_size * micro_batches_per_epoch,
         )
 
     def _build_local_validation_dataset(self):
@@ -99,7 +111,7 @@ class RectangularConditionalJiTDataModule(pl.LightningDataModule):
             raise ValueError(
                 f"Validation dataset has {len(self.val_dataset)} samples, which is fewer than validation.num_val_samples={num_val_samples}"
             )
-        rank, world_size = _resolve_rank_and_world_size(getattr(self, "trainer", None))
+        rank, world_size = _resolve_rank_and_world_size(_get_attached_trainer(self))
         indices = _select_validation_indices(num_val_samples=num_val_samples, rank=rank, world_size=world_size)
         return torch.utils.data.Subset(self.val_dataset, indices)
 
@@ -110,6 +122,75 @@ def _resolve_rank_and_world_size(trainer) -> tuple[int, int]:
     rank = int(getattr(trainer, "global_rank", 0))
     world_size = int(getattr(trainer, "world_size", 1))
     return rank, max(1, world_size)
+
+
+def _get_attached_trainer(datamodule) -> Any:
+    trainer = getattr(datamodule, "_trainer", None)
+    if trainer is not None:
+        return trainer
+    return getattr(datamodule, "trainer", None)
+
+
+class _RepeatingDistributedSampler(torch.utils.data.Sampler[int]):
+    def __init__(
+        self,
+        dataset,
+        *,
+        num_samples: int,
+        num_replicas: int,
+        rank: int,
+        shuffle: bool,
+        seed: int,
+    ) -> None:
+        if len(dataset) <= 0:
+            raise ValueError("Training dataset must contain at least one sample")
+        self.dataset = dataset
+        self.num_samples = int(num_samples)
+        self.num_replicas = max(1, int(num_replicas))
+        self.rank = int(rank)
+        self.shuffle = bool(shuffle)
+        self.seed = int(seed)
+        self.epoch = 0
+        self.total_size = self.num_samples * self.num_replicas
+
+    def __iter__(self):
+        generator = torch.Generator()
+        generator.manual_seed(self.seed + self.epoch)
+
+        dataset_size = len(self.dataset)
+        indices: list[int] = []
+        while len(indices) < self.total_size:
+            if self.shuffle:
+                indices.extend(torch.randperm(dataset_size, generator=generator).tolist())
+            else:
+                indices.extend(range(dataset_size))
+        indices = indices[: self.total_size]
+        rank_indices = indices[self.rank : self.total_size : self.num_replicas]
+        return iter(rank_indices)
+
+    def __len__(self) -> int:
+        return self.num_samples
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = int(epoch)
+
+
+def _resolve_train_micro_batches_per_epoch(train_cfg: dict[str, Any], world_size: int) -> int | None:
+    effective_steps_per_epoch = train_cfg.get("effective_steps_per_epoch")
+    effective_batch_size = train_cfg.get("effective_batch_size")
+    if effective_steps_per_epoch is None or effective_batch_size is None:
+        return None
+
+    batch_size = int(train_cfg.get("batch_size", 1))
+    global_micro_batch = batch_size * max(1, int(world_size))
+    total_batch = int(effective_batch_size)
+    if total_batch % global_micro_batch != 0:
+        raise ValueError(
+            f"effective_batch_size={total_batch} must be divisible by batch_size*world_size={global_micro_batch}"
+        )
+
+    accumulate_grad_batches = total_batch // global_micro_batch
+    return int(effective_steps_per_epoch) * accumulate_grad_batches
 
 
 def _select_validation_indices(num_val_samples: int, rank: int, world_size: int) -> list[int]:

@@ -37,6 +37,7 @@ def build_jit_flow_matching_batch(
     t_min: float,
     t_max: float,
     noise_scale: float = 1.0,
+    condition_dropout_p: float = 0.0,
     condition_type_id: int = 0,
     use_model_rgb: bool = False,
     use_model_depth: bool = True,
@@ -57,6 +58,16 @@ def build_jit_flow_matching_batch(
         use_model_depth=use_model_depth,
         use_model_normal=use_model_normal,
     )
+    if condition_dropout_p > 0.0:
+        drop_mask = torch.rand(
+            condition.shape[0],
+            device=condition.device,
+            dtype=condition.dtype,
+        ) < float(condition_dropout_p)
+        if torch.any(drop_mask):
+            condition = condition.clone()
+            condition[drop_mask] = 0.0
+
     condition_type_ids = torch.full(
         (x0.shape[0],),
         int(condition_type_id),

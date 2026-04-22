@@ -1,18 +1,77 @@
 import unittest
 from argparse import Namespace
 from pathlib import Path
+import sys
+import tempfile
 from unittest import mock
 
 from tools.train_lightning_rectangular_conditional_jit import (
+    _build_callbacks,
     _build_logger,
     _build_trainer_kwargs,
+    _resolve_resume_checkpoint,
     _resolve_accumulate_grad_batches,
     _resolve_micro_batches_per_epoch,
+    parse_args,
 )
 from utils import load_yaml_config
 
 
 class TrainLightningEntrypointTests(unittest.TestCase):
+    def test_build_callbacks_only_keep_last_and_latest_epoch(self) -> None:
+        callbacks = _build_callbacks(Path("/tmp/checkpoints"), enable_val_monitor=True)
+
+        self.assertEqual(len(callbacks), 2)
+        checkpoint_callback = callbacks[0]
+        self.assertEqual(checkpoint_callback.filename, "epoch_{epoch:06d}")
+        self.assertEqual(checkpoint_callback.save_top_k, 1)
+        self.assertTrue(checkpoint_callback.save_last)
+        self.assertEqual(checkpoint_callback.every_n_epochs, 1)
+        self.assertIsNone(checkpoint_callback.monitor)
+
+    def test_parse_args_short_resume_without_path_defaults_to_auto(self) -> None:
+        with mock.patch.object(sys, "argv", ["train.py", "config.yaml", "-r"]):
+            args = parse_args()
+
+        self.assertEqual(args.resume, "auto")
+
+    def test_parse_args_long_resume_without_path_defaults_to_auto(self) -> None:
+        with mock.patch.object(sys, "argv", ["train.py", "config.yaml", "--resume"]):
+            args = parse_args()
+
+        self.assertEqual(args.resume, "auto")
+
+    def test_resolve_resume_checkpoint_auto_uses_last_ckpt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            last_ckpt = output_dir / "checkpoints" / "last.ckpt"
+            last_ckpt.parent.mkdir(parents=True, exist_ok=True)
+            last_ckpt.mkdir()
+
+            resolved = _resolve_resume_checkpoint("auto", output_dir)
+
+        self.assertEqual(resolved, str(last_ckpt))
+
+    def test_resolve_resume_checkpoint_auto_raises_when_last_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with self.assertRaisesRegex(FileNotFoundError, "last checkpoint does not exist"):
+                _resolve_resume_checkpoint("auto", Path(tmp_dir))
+
+    def test_resolve_resume_checkpoint_uses_explicit_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            checkpoint = Path(tmp_dir) / "manual.ckpt"
+            checkpoint.mkdir()
+
+            resolved = _resolve_resume_checkpoint(str(checkpoint), Path(tmp_dir))
+
+        self.assertEqual(resolved, str(checkpoint.resolve()))
+
+    def test_resolve_resume_checkpoint_raises_for_missing_explicit_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            missing = Path(tmp_dir) / "missing.ckpt"
+            with self.assertRaisesRegex(FileNotFoundError, "Resume checkpoint not found"):
+                _resolve_resume_checkpoint(str(missing), Path(tmp_dir))
+
     def test_trainer_kwargs_are_epoch_based(self) -> None:
         args = Namespace(device="cuda", strategy=None, limit_train_batches=None, limit_val_batches=None)
         train_cfg = {

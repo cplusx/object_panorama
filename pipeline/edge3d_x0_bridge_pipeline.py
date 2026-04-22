@@ -69,16 +69,19 @@ class Edge3DX0BridgePipeline:
         num_steps: int = 20,
         noise: torch.Tensor | None = None,
         return_intermediates: bool = False,
+        cfg_scale: float = 1.0,
     ) -> dict[str, Any]:
         num_steps = int(num_steps)
         if num_steps <= 0:
             raise ValueError("num_steps must be positive")
+        cfg_scale = float(cfg_scale)
 
         device_batch, condition, condition_type_ids = self._prepare_batch(batch)
         target = device_batch["edge_depth"]
         device = target.device
         dtype = target.dtype
         x0_shape = tuple(target.shape)
+        uses_cfg = cfg_scale > 1.0
 
         if noise is None:
             z = torch.randn_like(target)
@@ -91,6 +94,7 @@ class Edge3DX0BridgePipeline:
         x_t = z
         pred_x0 = z
         intermediates: list[dict[str, torch.Tensor | float]] | None = [] if return_intermediates else None
+        zero_condition = torch.zeros_like(condition) if uses_cfg else None
 
         was_training = bool(self.model.training)
         self.model.eval()
@@ -104,12 +108,22 @@ class Edge3DX0BridgePipeline:
                     t = timesteps[index]
                     t_next = timesteps[index + 1]
                     timestep_batch = torch.full((x0_shape[0],), float(t.item()), device=device, dtype=dtype)
-                    pred_x0 = self.model(
+                    pred_cond = self.model(
                         sample=x_t,
                         timestep=timestep_batch,
                         condition=condition,
                         condition_type_ids=condition_type_ids,
                     ).sample
+                    if uses_cfg:
+                        pred_uncond = self.model(
+                            sample=x_t,
+                            timestep=timestep_batch,
+                            condition=zero_condition,
+                            condition_type_ids=condition_type_ids,
+                        ).sample
+                        pred_x0 = pred_uncond + cfg_scale * (pred_cond - pred_uncond)
+                    else:
+                        pred_x0 = pred_cond
                     x_t = (1.0 - t_next) * pred_x0 + t_next * z
 
                     if intermediates is not None:
@@ -129,6 +143,8 @@ class Edge3DX0BridgePipeline:
             "num_steps": num_steps,
             "condition_channels": int(condition.shape[1]),
             "effective_inference_dtype": effective_dtype,
+            "cfg_scale": cfg_scale,
+            "uses_cfg": uses_cfg,
         }
         if intermediates is not None:
             output["intermediates"] = intermediates

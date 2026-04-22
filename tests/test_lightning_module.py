@@ -9,7 +9,7 @@ import torch
 from PIL import Image
 
 from models import RectangularConditionalJiTModel
-from training.lightning_module import RectangularConditionalJiTLightningModule
+from training.lightning_module import RectangularConditionalJiTLightningModule, _build_model_input_batch
 from tools.train_lightning_rectangular_conditional_jit import _resolve_accumulate_grad_batches, _resolve_precision
 
 
@@ -186,6 +186,24 @@ class LightningModuleTests(unittest.TestCase):
         self.assertEqual(logged_payloads[0]["global_step"], 7)
         self.assertIn("train/preview", logged_payloads[0])
         self.assertNotIn("condition", logged_payloads[0])
+
+    def test_model_input_batch_can_disable_condition_dropout(self) -> None:
+        batch = {
+            "sample_ids": ["a", "b"],
+            "model_rgb": torch.ones(2, 15, 64, 128),
+            "model_depth": torch.ones(2, 5, 64, 128),
+            "model_normal": torch.ones(2, 15, 64, 128),
+            "edge_depth": torch.ones(2, 3, 64, 128),
+            "meta": [{}, {}],
+        }
+        objective_cfg = self._build_objective_cfg()
+        objective_cfg["condition_dropout_p"] = 1.0
+
+        train_model_input = _build_model_input_batch(batch, objective_cfg, enable_condition_dropout=True)
+        val_model_input = _build_model_input_batch(batch, objective_cfg, enable_condition_dropout=False)
+
+        self.assertTrue(torch.equal(train_model_input.condition, torch.zeros_like(train_model_input.condition)))
+        self.assertFalse(torch.equal(val_model_input.condition, torch.zeros_like(val_model_input.condition)))
 
 
 if __name__ == "__main__":

@@ -88,7 +88,12 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
             inference_dtype=str(self.validation_cfg.get("inference_dtype", "float16")),
         )
         num_steps = int(self.validation_cfg.get("num_inference_steps", 20))
-        output = pipeline.generate(batch, num_steps=num_steps, return_intermediates=False)
+        output = pipeline.generate(
+            batch,
+            num_steps=num_steps,
+            return_intermediates=False,
+            cfg_scale=float(self.validation_cfg.get("cfg_scale", 1.0)),
+        )
 
         _validate_condition_channels(self.model_cfg, int(output["condition_channels"]))
         pred = output["pred_edge_depth"]
@@ -135,7 +140,7 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
         }
 
     def _shared_step(self, batch: dict[str, Any], return_debug_tensors: bool = False) -> dict[str, Any]:
-        model_input = _build_model_input_batch(batch, self.objective_cfg)
+        model_input = _build_model_input_batch(batch, self.objective_cfg, enable_condition_dropout=True)
         _validate_condition_channels(self.model_cfg, model_input.condition)
         model_output = self.model(
             sample=model_input.sample,
@@ -314,15 +319,17 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
         return max(1, int(estimated_steps))
 
 
-def _build_model_input_batch(batch: dict[str, Any], objective_cfg: dict[str, Any]):
+def _build_model_input_batch(batch: dict[str, Any], objective_cfg: dict[str, Any], *, enable_condition_dropout: bool):
     objective_name = str(objective_cfg.get("name", "flow_matching")).lower()
     if objective_name != "flow_matching":
         raise ValueError(f"Unsupported objective '{objective_name}'")
+    condition_dropout_p = float(objective_cfg.get("condition_dropout_p", 0.0)) if enable_condition_dropout else 0.0
     return build_jit_flow_matching_batch(
         batch,
         t_min=float(objective_cfg.get("t_min", 0.0)),
         t_max=float(objective_cfg.get("t_max", 1.0)),
         noise_scale=float(objective_cfg.get("noise_scale", 1.0)),
+        condition_dropout_p=condition_dropout_p,
         condition_type_id=int(objective_cfg.get("condition_type_id", 0)),
         use_model_rgb=bool(objective_cfg.get("use_model_rgb", False)),
         use_model_depth=bool(objective_cfg.get("use_model_depth", True)),

@@ -2,13 +2,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 from torch.utils.data import Subset
 
 from edge3d.tensor_format import save_mixed_precision_sample
 from datasets import build_dataloader_from_config, build_dataset_from_config
-from training.datamodule import RectangularConditionalJiTDataModule, _select_validation_indices
+from training.datamodule import RectangularConditionalJiTDataModule, _resolve_train_micro_batches_per_epoch, _select_validation_indices
 
 
 class DataModuleTests(unittest.TestCase):
@@ -125,6 +126,59 @@ class DataModuleTests(unittest.TestCase):
         self.assertEqual(rank0, [0, 1, 2])
         self.assertEqual(rank1, [3, 4])
         self.assertEqual(len(rank0) + len(rank1), 5)
+
+    def test_train_dataloader_repeats_to_target_effective_epoch_length(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            manifest_path = root / "manifest.jsonl"
+
+            records = []
+            for index in range(4):
+                tensor_path = root / f"sample_{index}.npz"
+                model_tensor = np.ones((14, 8, 16), dtype=np.float32) * (index + 1)
+                edge_tensor = np.zeros((3, 8, 16), dtype=np.float32)
+                edge_tensor[0] = index + 1
+                save_mixed_precision_sample(
+                    tensor_path,
+                    uid=f"sample_{index}",
+                    model_tensor=model_tensor,
+                    edge_tensor=edge_tensor,
+                    resolution=8,
+                    model_max_hits=2,
+                    edge_max_hits=3,
+                )
+                records.append(
+                    {
+                        "sample_id": f"sample_{index}",
+                        "tensor_path": tensor_path.name,
+                        "meta": {"split": "train"},
+                    }
+                )
+
+            manifest_path.write_text(
+                "\n".join(json.dumps(record) for record in records) + "\n",
+                encoding="utf-8",
+            )
+
+            data_cfg = {"dataset_type": "edge3d_modalities", "manifest_path": str(manifest_path), "root_dir": str(root)}
+            train_cfg = {"batch_size": 4, "num_workers": 0, "effective_batch_size": 32, "effective_steps_per_epoch": 5, "seed": 0}
+            datamodule = RectangularConditionalJiTDataModule(
+                train_data_cfg=data_cfg,
+                val_data_cfg=data_cfg,
+                train_cfg=train_cfg,
+                validation_cfg={"num_val_samples": 4},
+                max_condition_channels=20,
+            )
+            datamodule.setup(stage="fit")
+            datamodule._trainer = SimpleNamespace(global_rank=0, world_size=2)
+
+            train_dataloader = datamodule.train_dataloader()
+
+            self.assertEqual(_resolve_train_micro_batches_per_epoch(train_cfg, world_size=2), 20)
+            self.assertEqual(len(train_dataloader), 20)
+            self.assertEqual(len(train_dataloader.sampler), 80)
+            train_batch = next(iter(train_dataloader))
+            self.assertEqual(tuple(train_batch["model_rgb"].shape), (4, 6, 8, 16))
 
 
 if __name__ == "__main__":
