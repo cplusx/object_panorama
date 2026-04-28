@@ -1,0 +1,14 @@
+experiment_name: edge_df_sdxl_roundtrip
+
+vae:
+  pretrained_model_name_or_path: madebyollin/sdxl-vae-fp16-fix
+  torch_dtype: float16
+
+transform:
+  beta: 30.0
+  depth_scale: 2.0
+  valid_eps: 1.0e-8
+  decode_valid_threshold: 0.02
+
+runtime:
+  device: cuda
