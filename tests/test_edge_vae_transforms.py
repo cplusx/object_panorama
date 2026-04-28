@@ -7,6 +7,7 @@ from unittest import mock
 import numpy as np
 
 from edge_vae.transforms import (
+    EDGE_DEPTH_NORMALIZATION_SCALE,
     compute_df_void_map,
     decode_df_tensor_to_edge_depth,
     decode_raw_tensor_to_edge_depth,
@@ -33,10 +34,11 @@ class TestEdgeVaeTransforms(unittest.TestCase):
             ],
             dtype=np.float32,
         )
-        encoded = encode_edge_depth_to_df_tensor(edge_depth, beta=30.0, depth_scale=1.0)
+        encoded = encode_edge_depth_to_df_tensor(edge_depth, beta=30.0)
         valid_mask = edge_depth > 1.0e-8
         self.assertTrue(np.all(encoded[valid_mask] >= 0.0))
         self.assertTrue(np.all(encoded[valid_mask] <= 1.0))
+        self.assertTrue(np.allclose(encoded[valid_mask], edge_depth[valid_mask] * EDGE_DEPTH_NORMALIZATION_SCALE))
         self.assertTrue(np.all(encoded[~valid_mask] <= 0.0))
         self.assertTrue(np.all(encoded[~valid_mask] >= -1.0))
 
@@ -50,17 +52,17 @@ class TestEdgeVaeTransforms(unittest.TestCase):
             ],
             dtype=np.float32,
         )
-        encoded = encode_edge_depth_to_raw_tensor(edge_depth, depth_scale=1.0, raw_scale=raw_scale)
+        encoded = encode_edge_depth_to_raw_tensor(edge_depth, raw_scale=raw_scale)
         valid_mask = edge_depth > 1.0e-8
         self.assertTrue(np.all(encoded[valid_mask] >= 0.0))
-        self.assertTrue(np.all(encoded[valid_mask] <= raw_scale + 1.0e-6))
+        self.assertTrue(np.allclose(encoded[valid_mask], edge_depth[valid_mask] * raw_scale))
         self.assertTrue(np.all(encoded[~valid_mask] == 0.0))
 
     def test_no_valid_hit_channel_uses_expected_fill_values(self) -> None:
         edge_depth = np.zeros((3, 4, 4), dtype=np.float32)
         edge_depth[1, 1, 1] = 0.5
-        encoded_df = encode_edge_depth_to_df_tensor(edge_depth, beta=30.0, depth_scale=1.0)
-        encoded_raw = encode_edge_depth_to_raw_tensor(edge_depth, depth_scale=1.0)
+        encoded_df = encode_edge_depth_to_df_tensor(edge_depth, beta=30.0)
+        encoded_raw = encode_edge_depth_to_raw_tensor(edge_depth)
         self.assertTrue(np.all(encoded_df[0] == -1.0))
         self.assertTrue(np.all(encoded_df[2] == -1.0))
         self.assertTrue(np.all(encoded_raw[0] == 0.0))
@@ -75,13 +77,41 @@ class TestEdgeVaeTransforms(unittest.TestCase):
             ],
             dtype=np.float32,
         )
-        decoded_df = decode_df_tensor_to_edge_depth(encoded, depth_scale=2.0, valid_threshold=0.02)
-        decoded_raw = decode_raw_tensor_to_edge_depth(encoded, depth_scale=2.0, raw_scale=0.5, valid_threshold=0.02)
+        decoded_df = decode_df_tensor_to_edge_depth(encoded, valid_threshold=0.02)
+        decoded_raw = decode_raw_tensor_to_edge_depth(encoded, raw_scale=0.5, valid_threshold=0.02)
         self.assertEqual(float(decoded_df[0, 0, 1]), 0.0)
         self.assertEqual(float(decoded_df[0, 1, 0]), 0.0)
         self.assertGreater(float(decoded_df[0, 1, 1]), 0.0)
         self.assertEqual(float(decoded_raw[1, 1, 0]), 0.0)
         self.assertGreater(float(decoded_raw[1, 1, 1]), 0.0)
+
+    def test_df_encode_decode_uses_same_scale(self) -> None:
+        edge_depth = np.array(
+            [
+                [[0.0, 0.5], [1.0, 0.0]],
+                [[0.25, 0.0], [0.0, 0.75]],
+                [[0.0, 0.0], [0.5, 0.25]],
+            ],
+            dtype=np.float32,
+        )
+        encoded = encode_edge_depth_to_df_tensor(edge_depth, beta=30.0)
+        decoded = decode_df_tensor_to_edge_depth(encoded, valid_threshold=0.0)
+        valid_mask = edge_depth > 1.0e-8
+        self.assertTrue(np.allclose(decoded[valid_mask], edge_depth[valid_mask], atol=1.0e-6))
+
+    def test_raw_encode_decode_uses_same_scale(self) -> None:
+        raw_scale = 1.0 / math.sqrt(3.0)
+        edge_depth = np.array(
+            [
+                [[0.0, 0.5], [1.0, 0.0]],
+                [[0.25, 0.0], [0.0, 0.75]],
+                [[0.0, 0.0], [0.5, 0.25]],
+            ],
+            dtype=np.float32,
+        )
+        encoded = encode_edge_depth_to_raw_tensor(edge_depth, raw_scale=raw_scale)
+        decoded = decode_raw_tensor_to_edge_depth(encoded, raw_scale=raw_scale, valid_threshold=0.0)
+        self.assertTrue(np.allclose(decoded, edge_depth, atol=1.0e-6))
 
 
 if __name__ == "__main__":

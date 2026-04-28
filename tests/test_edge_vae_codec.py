@@ -18,6 +18,8 @@ class _FakeLatentDistribution:
 
 
 class _FakeAutoencoderKL:
+    last_from_pretrained = None
+
     def __init__(self, *, torch_dtype: torch.dtype):
         self.config = SimpleNamespace(scaling_factor=0.5)
         self.loaded_torch_dtype = torch_dtype
@@ -25,7 +27,12 @@ class _FakeAutoencoderKL:
         self.dtype = torch_dtype
 
     @classmethod
-    def from_pretrained(cls, _name: str, torch_dtype: torch.dtype):
+    def from_pretrained(cls, name: str, **kwargs):
+        cls.last_from_pretrained = {
+            "name": name,
+            **kwargs,
+        }
+        torch_dtype = kwargs["torch_dtype"]
         return cls(torch_dtype=torch_dtype)
 
     def to(self, device=None, dtype=None):
@@ -46,6 +53,9 @@ class _FakeAutoencoderKL:
 
 
 class TestEdgeVaeCodec(unittest.TestCase):
+    def setUp(self) -> None:
+        _FakeAutoencoderKL.last_from_pretrained = None
+
     @mock.patch("edge_vae.codec._load_autoencoder_kl", return_value=_FakeAutoencoderKL)
     def test_roundtrip_uses_diffusers_style_encode_decode_scaling(self, _load_autoencoder_kl_mock) -> None:
         codec = DiffusersVAECodec(device="cpu", torch_dtype="float32")
@@ -62,6 +72,23 @@ class TestEdgeVaeCodec(unittest.TestCase):
         codec = DiffusersVAECodec(device="cpu", torch_dtype="float16")
         self.assertEqual(codec.torch_dtype, torch.float32)
         self.assertEqual(codec.vae.loaded_torch_dtype, torch.float32)
+
+    @mock.patch("edge_vae.codec._load_autoencoder_kl", return_value=_FakeAutoencoderKL)
+    def test_forwards_optional_subfolder_to_from_pretrained(self, _load_autoencoder_kl_mock) -> None:
+        DiffusersVAECodec(
+            pretrained_model_name_or_path="black-forest-labs/FLUX.1-schnell",
+            subfolder="vae",
+            device="cpu",
+            torch_dtype="float32",
+        )
+        self.assertEqual(
+            _FakeAutoencoderKL.last_from_pretrained,
+            {
+                "name": "black-forest-labs/FLUX.1-schnell",
+                "subfolder": "vae",
+                "torch_dtype": torch.float32,
+            },
+        )
 
 
 if __name__ == "__main__":

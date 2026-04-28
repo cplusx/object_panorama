@@ -19,8 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-path", required=True, help="Path to an Edge3D .npz sample")
     parser.add_argument("--output-dir", required=True, help="Directory to write roundtrip outputs")
     parser.add_argument("--mode", required=True, choices=["raw", "df"], help="Roundtrip mode")
-    parser.add_argument("--depth-scale", type=float, default=None)
-    parser.add_argument("--raw-scale", type=float, default=None)
+    parser.add_argument("--raw-scale", type=float, default=None, help="Raw mode only")
     parser.add_argument("--beta", type=float, default=None)
     parser.add_argument("--valid-eps", type=float, default=None)
     parser.add_argument("--decode-valid-threshold", type=float, default=None)
@@ -38,8 +37,7 @@ def main() -> None:
         vae_name=args.vae_name,
         torch_dtype=args.torch_dtype,
         device=args.device,
-        depth_scale=args.depth_scale,
-        raw_scale=args.raw_scale,
+        raw_scale=args.raw_scale if args.mode == "raw" else None,
         beta=args.beta,
         valid_eps=args.valid_eps,
         decode_valid_threshold=args.decode_valid_threshold,

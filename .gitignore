@@ -179,3 +179,7 @@ jit_samples/
 runs
 analysis
 archive
+local_experiments/edge3d_vqgan_lc/
+runs/vqgan_lc_edge3d/
+cache/vqgan_lc_edge3d/
+artifacts/vqgan_lc_edge3d/

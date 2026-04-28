@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from typing import Any
 
 import torch
 
@@ -11,13 +12,22 @@ class DiffusersVAECodec:
         pretrained_model_name_or_path: str = "madebyollin/sdxl-vae-fp16-fix",
         torch_dtype: str = "float16",
         device: str = "cuda",
+        subfolder: str | None = None,
+        from_pretrained_kwargs: dict[str, Any] | None = None,
     ):
         self.device = _resolve_device(device)
         self.torch_dtype = _resolve_torch_dtype(torch_dtype, self.device)
         autoencoder_kl_cls = _load_autoencoder_kl()
+        load_kwargs: dict[str, Any] = {
+            "torch_dtype": self.torch_dtype,
+        }
+        if subfolder is not None:
+            load_kwargs["subfolder"] = str(subfolder)
+        if from_pretrained_kwargs is not None:
+            load_kwargs.update(dict(from_pretrained_kwargs))
         self.vae = autoencoder_kl_cls.from_pretrained(
             pretrained_model_name_or_path,
-            torch_dtype=self.torch_dtype,
+            **load_kwargs,
         )
         self.vae.to(device=self.device, dtype=self.torch_dtype)
         self.vae.eval()

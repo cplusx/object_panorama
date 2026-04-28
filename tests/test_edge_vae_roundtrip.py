@@ -39,7 +39,7 @@ class TestEdgeVaeRoundtrip(unittest.TestCase):
                 output_dir=str(output_dir),
                 mode="raw",
                 vae_cfg={"pretrained_model_name_or_path": "fake", "torch_dtype": "float32"},
-                transform_cfg={"depth_scale": 2.0, "raw_scale": 1.0 / np.sqrt(3.0), "decode_valid_threshold": 0.02},
+                transform_cfg={"raw_scale": 1.0 / np.sqrt(3.0), "decode_valid_threshold": 0.02},
                 runtime_cfg={"device": "cpu"},
             )
 
@@ -63,7 +63,7 @@ class TestEdgeVaeRoundtrip(unittest.TestCase):
                 output_dir=str(output_dir),
                 mode="df",
                 vae_cfg={"pretrained_model_name_or_path": "fake", "torch_dtype": "float32"},
-                transform_cfg={"depth_scale": 2.0, "beta": 30.0, "decode_valid_threshold": 0.02},
+                transform_cfg={"beta": 30.0, "decode_valid_threshold": 0.02},
                 runtime_cfg={"device": "cpu"},
             )
 

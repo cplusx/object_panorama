@@ -37,6 +37,7 @@ def run_edge_vae_roundtrip(
         pretrained_model_name_or_path=str(vae_cfg.get("pretrained_model_name_or_path", "madebyollin/sdxl-vae-fp16-fix")),
         torch_dtype=str(vae_cfg.get("torch_dtype", "float16")),
         device=str(runtime_cfg.get("device", "cuda")),
+        subfolder=str(vae_cfg.get("subfolder")) if vae_cfg.get("subfolder") is not None else None,
     )
 
     roundtrip_output = codec.roundtrip(torch.from_numpy(input_encoded[None, ...]))
@@ -67,14 +68,12 @@ def _encode_edge_depth(edge_depth: np.ndarray, *, mode: str, transform_cfg: dict
     if mode == "raw":
         return encode_edge_depth_to_raw_tensor(
             edge_depth,
-            depth_scale=float(transform_cfg.get("depth_scale", 2.0)),
             raw_scale=float(transform_cfg.get("raw_scale", 1.0 / np.sqrt(3.0))),
             valid_eps=float(transform_cfg.get("valid_eps", 1.0e-8)),
         )
     return encode_edge_depth_to_df_tensor(
         edge_depth,
         beta=float(transform_cfg.get("beta", 30.0)),
-        depth_scale=float(transform_cfg.get("depth_scale", 2.0)),
         valid_eps=float(transform_cfg.get("valid_eps", 1.0e-8)),
     )
 
@@ -83,12 +82,10 @@ def _decode_edge_depth(encoded: np.ndarray, *, mode: str, transform_cfg: dict[st
     if mode == "raw":
         return decode_raw_tensor_to_edge_depth(
             encoded,
-            depth_scale=float(transform_cfg.get("depth_scale", 2.0)),
             raw_scale=float(transform_cfg.get("raw_scale", 1.0 / np.sqrt(3.0))),
             valid_threshold=float(transform_cfg.get("decode_valid_threshold", 0.02)),
         )
     return decode_df_tensor_to_edge_depth(
         encoded,
-        depth_scale=float(transform_cfg.get("depth_scale", 2.0)),
         valid_threshold=float(transform_cfg.get("decode_valid_threshold", 0.02)),
     )

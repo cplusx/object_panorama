@@ -5,7 +5,6 @@ vae:
   torch_dtype: float16
 
 transform:
-  depth_scale: 2.0
   raw_scale: 0.5773502691896258
   valid_eps: 1.0e-8
   decode_valid_threshold: 0.02

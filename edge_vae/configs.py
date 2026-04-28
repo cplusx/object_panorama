@@ -23,7 +23,6 @@ def normalize_roundtrip_mode(mode: str) -> str:
 def default_edge_vae_config(mode: str) -> dict[str, Any]:
     normalized_mode = normalize_roundtrip_mode(mode)
     transform_cfg: dict[str, Any] = {
-        "depth_scale": 2.0,
         "valid_eps": 1.0e-8,
         "decode_valid_threshold": 0.02,
     }
@@ -61,7 +60,6 @@ def apply_edge_vae_overrides(
     vae_name: str | None = None,
     torch_dtype: str | None = None,
     device: str | None = None,
-    depth_scale: float | None = None,
     raw_scale: float | None = None,
     beta: float | None = None,
     valid_eps: float | None = None,
@@ -74,8 +72,6 @@ def apply_edge_vae_overrides(
         merged.setdefault("vae", {})["torch_dtype"] = str(torch_dtype)
     if device is not None:
         merged.setdefault("runtime", {})["device"] = str(device)
-    if depth_scale is not None:
-        merged.setdefault("transform", {})["depth_scale"] = float(depth_scale)
     if raw_scale is not None:
         merged.setdefault("transform", {})["raw_scale"] = float(raw_scale)
     if beta is not None:
