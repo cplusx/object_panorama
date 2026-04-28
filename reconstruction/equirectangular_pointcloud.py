@@ -36,6 +36,10 @@ MODEL_SURFACE_COLOR_PALETTE_RGB: tuple[tuple[int, int, int], ...] = (
     (116, 116, 116),
     (96, 96, 96),
 )
+POINT_CLOUD_VALID_DEPTH_EPSILON = 1.0e-8
+PRED_POINT_CLOUD_MIN_DEPTH_FLOOR = 1.0e-4
+PRED_POINT_CLOUD_REFERENCE_PERCENTILE = 5.0
+PRED_POINT_CLOUD_REFERENCE_SCALE = 0.25
 
 
 def build_direction_map(height: int) -> np.ndarray:
@@ -46,6 +50,7 @@ def decode_depth_layers_to_points(
     depth_layers: np.ndarray,
     resolution: int | None = None,
     color_palette_rgb: tuple[tuple[int, int, int], ...] = EDGE_HIT_COLOR_PALETTE_RGB,
+    min_valid_depth: float = POINT_CLOUD_VALID_DEPTH_EPSILON,
 ) -> tuple[np.ndarray, np.ndarray, list[int]]:
     depth_layers = np.asarray(depth_layers, dtype=np.float32)
     if depth_layers.ndim != 3:
@@ -57,7 +62,7 @@ def decode_depth_layers_to_points(
     point_counts_per_layer: list[int] = []
     for layer_index in range(depth_layers.shape[0]):
         depth_layer = depth_layers[layer_index]
-        valid_mask = np.isfinite(depth_layer) & (depth_layer > 1e-8)
+        valid_mask = np.isfinite(depth_layer) & (depth_layer > float(min_valid_depth))
         layer_count = int(valid_mask.sum())
         point_counts_per_layer.append(layer_count)
         if not np.any(valid_mask):
@@ -77,12 +82,43 @@ def decode_edge_points(
     edge_depth: np.ndarray,
     resolution: int | None = None,
     color_palette_rgb: tuple[tuple[int, int, int], ...] = EDGE_HIT_COLOR_PALETTE_RGB,
+    min_valid_depth: float = POINT_CLOUD_VALID_DEPTH_EPSILON,
 ) -> tuple[np.ndarray, np.ndarray, list[int]]:
     return decode_depth_layers_to_points(
         edge_depth,
         resolution=resolution,
         color_palette_rgb=color_palette_rgb,
+        min_valid_depth=min_valid_depth,
     )
+
+
+def _positive_depth_values(values: np.ndarray) -> np.ndarray:
+    depth_values = np.asarray(values, dtype=np.float32)
+    return depth_values[np.isfinite(depth_values) & (depth_values > POINT_CLOUD_VALID_DEPTH_EPSILON)].astype(np.float32)
+
+
+def _resolve_prediction_pointcloud_min_depth(*reference_depth_layers: np.ndarray) -> float:
+    positive_blocks = [_positive_depth_values(values) for values in reference_depth_layers]
+    positive_blocks = [values for values in positive_blocks if values.size > 0]
+    if not positive_blocks:
+        return POINT_CLOUD_VALID_DEPTH_EPSILON
+
+    reference_positive = np.concatenate(positive_blocks, axis=0)
+    reference_low_percentile = float(np.percentile(reference_positive, PRED_POINT_CLOUD_REFERENCE_PERCENTILE))
+    return max(PRED_POINT_CLOUD_MIN_DEPTH_FLOOR, reference_low_percentile * PRED_POINT_CLOUD_REFERENCE_SCALE)
+
+
+def _concatenate_point_cloud_blocks(blocks: Iterable[tuple[np.ndarray, np.ndarray]]) -> tuple[np.ndarray, np.ndarray]:
+    point_blocks: list[np.ndarray] = []
+    color_blocks: list[np.ndarray] = []
+    for points, colors in blocks:
+        if len(points) == 0:
+            continue
+        point_blocks.append(np.asarray(points, dtype=np.float32))
+        color_blocks.append(np.asarray(colors, dtype=np.float32))
+    if not point_blocks:
+        return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.float32)
+    return np.concatenate(point_blocks, axis=0), np.concatenate(color_blocks, axis=0)
 
 
 def export_point_cloud(points: np.ndarray, colors_rgb: np.ndarray, output_path: Path) -> None:
@@ -143,6 +179,7 @@ def save_edge_depth_comparison_pointclouds(
     output_dir: str | Path,
     pred_edge_depth: torch.Tensor | np.ndarray,
     target_edge_depth: torch.Tensor | np.ndarray,
+    pred_min_valid_depth: float | None = None,
 ) -> dict[str, str]:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -150,36 +187,40 @@ def save_edge_depth_comparison_pointclouds(
     pred_edge_depth_np = _to_depth_layers_numpy(pred_edge_depth, expected_name="pred_edge_depth")
     target_edge_depth_np = _to_depth_layers_numpy(target_edge_depth, expected_name="target_edge_depth")
     resolution = int(pred_edge_depth_np.shape[1])
+    resolved_pred_min_valid_depth = (
+        float(pred_min_valid_depth)
+        if pred_min_valid_depth is not None
+        else _resolve_prediction_pointcloud_min_depth(target_edge_depth_np)
+    )
 
     pred_points, pred_colors, _ = decode_edge_points(
         pred_edge_depth_np,
         resolution=resolution,
         color_palette_rgb=PRED_EDGE_COLOR_PALETTE_RGB,
+        min_valid_depth=resolved_pred_min_valid_depth,
     )
     target_points, target_colors, _ = decode_edge_points(
         target_edge_depth_np,
         resolution=resolution,
         color_palette_rgb=TARGET_EDGE_COLOR_PALETTE_RGB,
     )
+    target_pred_points, target_pred_colors = _concatenate_point_cloud_blocks(
+        [
+            (target_points, target_colors),
+            (pred_points, pred_colors),
+        ]
+    )
 
     pred_path = output_path / "pred_edge_points.ply"
     target_path = output_path / "target_edge_points.ply"
-    overlap_path = output_path / "overlap_pointcloud.glb"
+    target_pred_path = output_path / "target_pred_points.ply"
     export_point_cloud(pred_points, pred_colors, pred_path)
     export_point_cloud(target_points, target_colors, target_path)
-    export_overlap_pointcloud_glb(
-        model_points=target_points,
-        model_colors=target_colors,
-        edge_points=pred_points,
-        edge_colors=pred_colors,
-        output_path=overlap_path,
-        model_node_name="target_edge_points",
-        edge_node_name="pred_edge_points",
-    )
+    export_point_cloud(target_pred_points, target_pred_colors, target_pred_path)
     return {
         "pred_edge_points": str(pred_path),
         "target_edge_points": str(target_path),
-        "overlap_pointcloud": str(overlap_path),
+        "target_pred_points": str(target_pred_path),
     }
 
 
@@ -196,11 +237,13 @@ def save_model_target_pred_pointclouds(
     pred_edge_depth_np = _to_depth_layers_numpy(pred_edge_depth, expected_name="pred_edge_depth")
     target_edge_depth_np = _to_depth_layers_numpy(target_edge_depth, expected_name="target_edge_depth")
     resolution = int(model_depth_np.shape[1])
+    pred_min_valid_depth = _resolve_prediction_pointcloud_min_depth(target_edge_depth_np, model_depth_np)
 
     outputs = save_edge_depth_comparison_pointclouds(
         output_path,
         pred_edge_depth=pred_edge_depth_np,
         target_edge_depth=target_edge_depth_np,
+        pred_min_valid_depth=pred_min_valid_depth,
     )
 
     model_points, model_colors, _ = decode_depth_layers_to_points(
@@ -212,29 +255,30 @@ def save_model_target_pred_pointclouds(
         pred_edge_depth_np,
         resolution=resolution,
         color_palette_rgb=PRED_EDGE_COLOR_PALETTE_RGB,
+        min_valid_depth=pred_min_valid_depth,
     )
     target_points, target_colors, _ = decode_edge_points(
         target_edge_depth_np,
         resolution=resolution,
         color_palette_rgb=TARGET_EDGE_COLOR_PALETTE_RGB,
     )
+    model_target_pred_points, model_target_pred_colors = _concatenate_point_cloud_blocks(
+        [
+            (model_points, model_colors),
+            (target_points, target_colors),
+            (pred_points, pred_colors),
+        ]
+    )
 
     model_path = output_path / "model_points.ply"
-    overlap_model_target_pred_path = output_path / "overlap_model_target_pred.glb"
+    model_target_pred_path = output_path / "model_target_pred_points.ply"
     export_point_cloud(model_points, model_colors, model_path)
-    export_named_pointclouds_glb(
-        [
-            ("model_points", model_points, model_colors),
-            ("target_edge_points", target_points, target_colors),
-            ("pred_edge_points", pred_points, pred_colors),
-        ],
-        overlap_model_target_pred_path,
-    )
+    export_point_cloud(model_target_pred_points, model_target_pred_colors, model_target_pred_path)
 
     outputs.update(
         {
             "model_points": str(model_path),
-            "overlap_model_target_pred": str(overlap_model_target_pred_path),
+            "model_target_pred_points": str(model_target_pred_path),
         }
     )
     return outputs

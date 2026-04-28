@@ -116,6 +116,8 @@ class TrainLightningEntrypointTests(unittest.TestCase):
         config = load_yaml_config("/home/viplab/jiaxin/object_panorama/configs/experiment/edge3d_flow_train.yaml")
         self.assertTrue(config["pretrained"]["load_jit"])
         self.assertTrue(config["wandb"]["enabled"])
+        self.assertEqual(config["inference"]["num_inference_steps"], 20)
+        self.assertEqual(config["inference"]["cfg_scale"], 1.5)
         self.assertEqual(
             config["pretrained"]["public_checkpoint_path"],
             "/home/viplab/jiaxin/object_panorama/pretrained_weights/jit-b-32/checkpoint-last.pth",

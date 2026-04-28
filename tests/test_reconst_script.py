@@ -56,10 +56,10 @@ class ReconstructionScriptTests(unittest.TestCase):
 
             self.assertEqual(Path(result.model_pointcloud_path).name, "model_points.ply")
             self.assertEqual(Path(result.edge_pointcloud_path).name, "edge_points.ply")
-            self.assertEqual(Path(result.overlap_pointcloud_glb_path).name, "overlap_pointcloud.glb")
+            self.assertEqual(Path(result.overlap_pointcloud_path).name, "overlap_pointcloud.ply")
             self.assertTrue(Path(result.model_pointcloud_path).is_file())
             self.assertTrue(Path(result.edge_pointcloud_path).is_file())
-            self.assertTrue(Path(result.overlap_pointcloud_glb_path).is_file())
+            self.assertTrue(Path(result.overlap_pointcloud_path).is_file())
             self.assertTrue((Path(tmp_dir) / "outputs" / "synthetic_uid" / "synthetic_uid_reconstruction_report.json").is_file())
             self.assertGreater(result.model_points, 0)
             self.assertGreater(result.edge_points, 0)

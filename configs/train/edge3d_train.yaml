@@ -1,8 +1,8 @@
 seed: 0
 batch_size: 8
-effective_batch_size: 128
+effective_batch_size: 256
 num_workers: 8
-max_epochs: 100
+max_epochs: 200
 effective_steps_per_epoch: 2000
 train_log_every_n_steps: 10
 visualize_every_n_steps: 1000
@@ -12,5 +12,5 @@ backbone_lr_mult: 1
 weight_decay: 1.0e-5
 optimizer: adamw
 lr_scheduler:
-  name: cosine_with_warmup
-  warmup_epochs: 1
+  name: constant
+  # warmup_epochs: 1

@@ -205,6 +205,58 @@ class LightningModuleTests(unittest.TestCase):
         self.assertTrue(torch.equal(train_model_input.condition, torch.zeros_like(train_model_input.condition)))
         self.assertFalse(torch.equal(val_model_input.condition, torch.zeros_like(val_model_input.condition)))
 
+    def test_log_losses_includes_balanced_edge_statistics(self) -> None:
+        module = RectangularConditionalJiTLightningModule(
+            model_cfg=self._build_model_cfg(),
+            objective_cfg=self._build_objective_cfg(),
+            loss_cfg={"name": "balanced_l2"},
+            optim_cfg=self._build_optim_cfg(),
+            freeze_cfg={},
+            pretrained_cfg={},
+        )
+
+        logged = []
+
+        def capture_log(name, value, **kwargs):
+            del kwargs
+            logged.append((name, float(value.detach().cpu())))
+
+        module.log = capture_log
+        module._trainer = SimpleNamespace(world_size=1)
+        module._log_losses(
+            "train",
+            {
+                "loss_total": torch.tensor(1.5),
+                "loss_balanced_l2": torch.tensor(1.5),
+                "loss_mse": torch.tensor(0.75),
+                "loss_l1": torch.tensor(0.5),
+                "loss_edge_l2": torch.tensor(2.0),
+                "loss_non_edge_l2": torch.tensor(1.0),
+                "edge_pixel_fraction": torch.tensor(0.25),
+                "non_edge_pixel_fraction": torch.tensor(0.75),
+                "edge_weight_scale": torch.tensor(2.0),
+                "non_edge_weight_scale": torch.tensor(0.6666667),
+            },
+            batch_size=2,
+        )
+
+        logged_names = {name for name, _ in logged}
+        self.assertEqual(
+            logged_names,
+            {
+                "train/loss_total",
+                "train/loss_balanced_l2",
+                "train/loss_mse",
+                "train/loss_l1",
+                "train/loss_edge_l2",
+                "train/loss_non_edge_l2",
+                "train/edge_pixel_fraction",
+                "train/non_edge_pixel_fraction",
+                "train/edge_weight_scale",
+                "train/non_edge_weight_scale",
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

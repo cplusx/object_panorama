@@ -22,7 +22,6 @@ from reconstruction import (
     EDGE_HIT_COLOR_PALETTE_RGB,
     build_direction_map,
     decode_edge_points,
-    export_overlap_pointcloud_glb,
     export_point_cloud,
 )
 
@@ -74,7 +73,7 @@ class ReconstructionStats:
 class ReconstructionResult:
     uid: str
     npz_path: str
-    overlap_pointcloud_glb_path: str
+    overlap_pointcloud_path: str
     reference_model_pointcloud_path: str | None
     reference_vs_reconstructed_pointcloud_path: str | None
     model_pointcloud_path: str
@@ -266,7 +265,7 @@ def reconstruct_equirectangular_npz_to_pointclouds(
         color_palette_rgb=EDGE_HIT_COLOR_PALETTE_RGB,
     )
 
-    overlap_pointcloud_glb_path = sample_dir / "overlap_pointcloud.glb"
+    overlap_pointcloud_path = sample_dir / "overlap_pointcloud.ply"
     reference_model_pointcloud_path: Path | None = None
     reference_vs_reconstructed_pointcloud_path: Path | None = None
     model_pointcloud_path = sample_dir / "model_points.ply"
@@ -274,12 +273,10 @@ def reconstruct_equirectangular_npz_to_pointclouds(
 
     export_point_cloud(model_points, model_colors, model_pointcloud_path)
     export_point_cloud(edge_points, edge_colors, edge_pointcloud_path)
-    export_overlap_pointcloud_glb(
-        model_points=model_points,
-        model_colors=model_colors,
-        edge_points=edge_points,
-        edge_colors=edge_colors,
-        output_path=overlap_pointcloud_glb_path,
+    export_combined_point_cloud(
+        point_sets=[model_points, edge_points],
+        color_sets=[model_colors, edge_colors],
+        output_path=overlap_pointcloud_path,
     )
 
     model_stats = asdict(compute_layer_stats(np.asarray(sample["model_depth"], dtype=np.float32)))
@@ -334,7 +331,7 @@ def reconstruct_equirectangular_npz_to_pointclouds(
     result = ReconstructionResult(
         uid=uid,
         npz_path=str(npz_path),
-        overlap_pointcloud_glb_path=str(overlap_pointcloud_glb_path),
+        overlap_pointcloud_path=str(overlap_pointcloud_path),
         reference_model_pointcloud_path=str(reference_model_pointcloud_path) if reference_model_pointcloud_path is not None else None,
         reference_vs_reconstructed_pointcloud_path=str(reference_vs_reconstructed_pointcloud_path) if reference_vs_reconstructed_pointcloud_path is not None else None,
         model_pointcloud_path=str(model_pointcloud_path),
@@ -438,7 +435,7 @@ def write_summary(output_dir: Path, results: list[dict[str, Any]]) -> None:
         row = {
             "uid": result["uid"],
             "npz_path": result["npz_path"],
-            "overlap_pointcloud_glb_path": result["overlap_pointcloud_glb_path"],
+            "overlap_pointcloud_path": result["overlap_pointcloud_path"],
             "reference_model_pointcloud_path": result.get("reference_model_pointcloud_path"),
             "reference_vs_reconstructed_pointcloud_path": result.get("reference_vs_reconstructed_pointcloud_path"),
             "model_pointcloud_path": result["model_pointcloud_path"],

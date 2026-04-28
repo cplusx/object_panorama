@@ -3,5 +3,5 @@ data_folders:
   - /home/devdata/edge3d_data/equirectangular_data
 manifest_path: /home/devdata/edge3d_data/manifest_cache/edge3d_train.jsonl
 start_index: 0
-data_number: 10000
+data_number: 90000
 decode_model_normal: true

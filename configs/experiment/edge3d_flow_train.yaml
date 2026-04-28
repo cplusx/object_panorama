@@ -31,11 +31,16 @@ wandb:
 
 validation:
   num_inference_steps: 20
-  inference_dtype: float16
-  cfg_scale: 1.5
+  inference_dtype: float32
+  cfg_scale: 5
   num_val_samples: 4
   save_preview_every_n_epochs: 1
   save_reconstruction: true
+
+inference:
+  num_inference_steps: 20
+  inference_dtype: float32
+  cfg_scale: 5
 
 objective:
   name: flow_matching
@@ -49,8 +54,9 @@ objective:
   use_model_normal: true
 
 loss:
+  name: mse_l1
   mse_weight: 1.0
-  l1_weight: 0.0
+  l1_weight: 0.1
 
 pretrained:
   load_jit: true

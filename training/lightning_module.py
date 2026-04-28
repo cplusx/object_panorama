@@ -102,11 +102,7 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
             dtype=pred.dtype,
         )
         infer_loss_dict = compute_prediction_losses(pred, target, self.loss_cfg)
-        metrics = {
-            "val/infer_loss_total": infer_loss_dict["loss_total"],
-            "val/infer_mse": infer_loss_dict["loss_mse"],
-            "val/infer_l1": infer_loss_dict["loss_l1"],
-        }
+        metrics = _build_validation_metric_dict(infer_loss_dict)
         self._log_metric_dict(metrics, batch_size=int(batch["edge_depth"].shape[0]), prog_bar_key="val/infer_loss_total")
         self._maybe_save_validation_preview(batch, pred)
         return metrics
@@ -164,33 +160,19 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
 
         on_step = split == "train"
         sync_dist = bool(getattr(self.trainer, "world_size", 1) > 1)
-        self.log(
-            f"{split}/loss_total",
-            loss_dict["loss_total"],
-            on_step=on_step,
-            on_epoch=True,
-            prog_bar=True,
-            batch_size=batch_size,
-            sync_dist=sync_dist,
-        )
-        self.log(
-            f"{split}/loss_mse",
-            loss_dict["loss_mse"],
-            on_step=on_step,
-            on_epoch=True,
-            prog_bar=False,
-            batch_size=batch_size,
-            sync_dist=sync_dist,
-        )
-        self.log(
-            f"{split}/loss_l1",
-            loss_dict["loss_l1"],
-            on_step=on_step,
-            on_epoch=True,
-            prog_bar=False,
-            batch_size=batch_size,
-            sync_dist=sync_dist,
-        )
+        for key in _ordered_loss_metric_keys(loss_dict):
+            value = loss_dict[key]
+            if not torch.is_tensor(value):
+                continue
+            self.log(
+                f"{split}/{key}",
+                value,
+                on_step=on_step,
+                on_epoch=True,
+                prog_bar=key == "loss_total",
+                batch_size=batch_size,
+                sync_dist=sync_dist,
+            )
 
     def _log_metric_dict(self, metrics: dict[str, torch.Tensor], batch_size: int, prog_bar_key: str | None = None) -> None:
         if getattr(self, "_trainer", None) is None:
@@ -305,8 +287,8 @@ class RectangularConditionalJiTLightningModule(pl.LightningModule):
             sample_dir / "model_points.ply",
             sample_dir / "pred_edge_points.ply",
             sample_dir / "target_edge_points.ply",
-            sample_dir / "overlap_pointcloud.glb",
-            sample_dir / "overlap_model_target_pred.glb",
+            sample_dir / "target_pred_points.ply",
+            sample_dir / "model_target_pred_points.ply",
         ]
 
     def _estimate_total_steps(self) -> int | None:
@@ -335,6 +317,39 @@ def _build_model_input_batch(batch: dict[str, Any], objective_cfg: dict[str, Any
         use_model_depth=bool(objective_cfg.get("use_model_depth", True)),
         use_model_normal=bool(objective_cfg.get("use_model_normal", True)),
     )
+
+
+def _build_validation_metric_dict(loss_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    metrics: dict[str, torch.Tensor] = {}
+    for key in _ordered_loss_metric_keys(loss_dict):
+        value = loss_dict[key]
+        if not torch.is_tensor(value):
+            continue
+        if key == "loss_total":
+            metrics["val/infer_loss_total"] = value
+        elif key.startswith("loss_"):
+            metrics[f"val/infer_{key[5:]}"] = value
+        else:
+            metrics[f"val/infer_{key}"] = value
+    return metrics
+
+
+def _ordered_loss_metric_keys(loss_dict: dict[str, Any]) -> list[str]:
+    preferred_order = [
+        "loss_total",
+        "loss_balanced_l2",
+        "loss_mse",
+        "loss_l1",
+        "loss_edge_l2",
+        "loss_non_edge_l2",
+        "edge_pixel_fraction",
+        "non_edge_pixel_fraction",
+        "edge_weight_scale",
+        "non_edge_weight_scale",
+    ]
+    ordered = [key for key in preferred_order if key in loss_dict]
+    extras = sorted(key for key in loss_dict if key not in ordered)
+    return ordered + extras
 
 
 def _prepare_model_cfg(model_cfg: dict[str, Any], objective_cfg: dict[str, Any]) -> dict[str, Any]:

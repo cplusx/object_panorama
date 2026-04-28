@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from training import build_edge3d_condition, build_jit_flow_matching_batch
+from training import build_edge3d_condition, build_jit_flow_matching_batch, compute_prediction_losses
 
 
 class TrainingObjectiveTests(unittest.TestCase):
@@ -58,6 +58,56 @@ class TrainingObjectiveTests(unittest.TestCase):
         )
 
         self.assertTrue(torch.equal(model_input.condition, expected_condition))
+
+    def test_balanced_l2_matches_plain_mse_for_uniform_error(self) -> None:
+        target = torch.zeros(1, 3, 2, 4)
+        target[:, :, 0, 0] = 1.0
+        pred = target + 1.0
+
+        loss_dict = compute_prediction_losses(pred, target, {"name": "balanced_l2"})
+
+        self.assertAlmostEqual(float(loss_dict["loss_total"]), 1.0, places=6)
+        self.assertAlmostEqual(float(loss_dict["loss_balanced_l2"]), 1.0, places=6)
+        self.assertAlmostEqual(float(loss_dict["loss_edge_l2"]), 1.0, places=6)
+        self.assertAlmostEqual(float(loss_dict["loss_non_edge_l2"]), 1.0, places=6)
+        self.assertAlmostEqual(float(loss_dict["edge_pixel_fraction"]), 0.125, places=6)
+        self.assertAlmostEqual(float(loss_dict["non_edge_pixel_fraction"]), 0.875, places=6)
+        self.assertAlmostEqual(float(loss_dict["edge_weight_scale"]), 4.0, places=6)
+        self.assertAlmostEqual(float(loss_dict["non_edge_weight_scale"]), 4.0 / 7.0, places=6)
+
+    def test_balanced_l2_is_computed_per_sample(self) -> None:
+        target = torch.zeros(2, 3, 2, 2)
+        target[0, :, 0, 0] = 1.0
+        target[1, :, 0, :] = 1.0
+
+        pred = torch.zeros_like(target)
+        pred[0, :, 0, 0] = 2.0
+        pred[0, :, 0, 1] = 1.0
+        pred[0, :, 1, :] = 1.0
+        pred[1, :, 0, :] = 3.0
+        pred[1, :, 1, :] = 1.0
+
+        loss_dict = compute_prediction_losses(pred, target, {"name": "balanced_l2"})
+
+        sample0_edge_l2 = 1.0
+        sample0_non_edge_l2 = 1.0
+        sample1_edge_l2 = 4.0
+        sample1_non_edge_l2 = 1.0
+        expected_total = 0.5 * ((0.5 * (sample0_edge_l2 + sample0_non_edge_l2)) + (0.5 * (sample1_edge_l2 + sample1_non_edge_l2)))
+
+        self.assertAlmostEqual(float(loss_dict["loss_total"]), expected_total, places=6)
+        self.assertAlmostEqual(float(loss_dict["loss_edge_l2"]), 2.5, places=6)
+        self.assertAlmostEqual(float(loss_dict["loss_non_edge_l2"]), 1.0, places=6)
+
+    def test_weighted_sum_loss_remains_available(self) -> None:
+        pred = torch.tensor([[[[1.0]]]])
+        target = torch.tensor([[[[0.0]]]])
+
+        loss_dict = compute_prediction_losses(pred, target, {"name": "weighted_sum", "mse_weight": 2.0, "l1_weight": 3.0})
+
+        self.assertAlmostEqual(float(loss_dict["loss_mse"]), 1.0, places=6)
+        self.assertAlmostEqual(float(loss_dict["loss_l1"]), 1.0, places=6)
+        self.assertAlmostEqual(float(loss_dict["loss_total"]), 5.0, places=6)
 
 
 if __name__ == "__main__":

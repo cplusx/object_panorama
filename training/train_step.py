@@ -58,6 +58,7 @@ def _build_model_input_batch(batch: dict[str, Any], objective_cfg: dict[str, Any
         t_min=float(objective_cfg.get("t_min", 0.0)),
         t_max=float(objective_cfg.get("t_max", 1.0)),
         noise_scale=float(objective_cfg.get("noise_scale", 1.0)),
+        condition_dropout_p=float(objective_cfg.get("condition_dropout_p", 0.0)),
         condition_type_id=int(objective_cfg.get("condition_type_id", 0)),
         use_model_rgb=bool(objective_cfg.get("use_model_rgb", False)),
         use_model_depth=bool(objective_cfg.get("use_model_depth", True)),

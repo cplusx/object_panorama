@@ -49,14 +49,32 @@ class EquirectangularPointcloudTests(unittest.TestCase):
             model_cloud = trimesh.load(outputs["model_points"], force="mesh")
             pred_cloud = trimesh.load(outputs["pred_edge_points"], force="mesh")
             target_cloud = trimesh.load(outputs["target_edge_points"], force="mesh")
-            overlap_scene = trimesh.load(outputs["overlap_pointcloud"], force="scene")
-            overlap_model_target_pred_scene = trimesh.load(outputs["overlap_model_target_pred"], force="scene")
+            target_pred_cloud = trimesh.load(outputs["target_pred_points"], force="mesh")
+            model_target_pred_cloud = trimesh.load(outputs["model_target_pred_points"], force="mesh")
 
             self.assertEqual(len(getattr(model_cloud, "vertices", [])), 0)
             self.assertEqual(len(getattr(pred_cloud, "vertices", [])), 0)
             self.assertEqual(len(getattr(target_cloud, "vertices", [])), 0)
-            self.assertEqual(len(overlap_scene.geometry), 0)
-            self.assertEqual(len(overlap_model_target_pred_scene.geometry), 0)
+            self.assertEqual(len(getattr(target_pred_cloud, "vertices", [])), 0)
+            self.assertEqual(len(getattr(model_target_pred_cloud, "vertices", [])), 0)
+
+    def test_save_model_target_pred_pointclouds_filters_near_zero_prediction_noise(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            model_depth = np.full((1, 1, 4, 8), 1.0, dtype=np.float32)
+            target_edge_depth = np.full((1, 1, 4, 8), 0.8, dtype=np.float32)
+            pred_edge_depth = np.zeros((1, 1, 4, 8), dtype=np.float32)
+            pred_edge_depth[0, 0, 0, 0] = 1.0
+            pred_edge_depth[0, 0, 1, 1] = 1.0e-5
+
+            outputs = save_model_target_pred_pointclouds(
+                tmp_dir,
+                model_depth=model_depth,
+                pred_edge_depth=pred_edge_depth,
+                target_edge_depth=target_edge_depth,
+            )
+
+            pred_cloud = trimesh.load(outputs["pred_edge_points"])
+            self.assertEqual(len(getattr(pred_cloud, "vertices", [])), 1)
 
 
 if __name__ == "__main__":
